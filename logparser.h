@@ -29,6 +29,10 @@ public:
 
 private:
     LogEntry parseLine(const QString &line);
+    QVector<LogEntry> parseCsv(QFile &file);
+
+    // RFC 4180 필드 하나 파싱 (따옴표 이스케이프 처리)
+    QStringList splitCsvLine(const QString &line);
 
     int m_noiseCount = 0;
 };

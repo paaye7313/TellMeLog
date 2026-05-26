@@ -26,6 +26,7 @@ private slots:
     void onParseFile();       // 파싱 버튼 (대용량용)
     void onGenerateReport();
     void onFileSelected(QListWidgetItem *item);
+    void onExportCsv();
 
 private:
     void setupUI();
@@ -40,6 +41,7 @@ private:
     QPushButton  *m_removeFileBtn;
     QPushButton  *m_parseBtn;     // 수동 파싱 버튼 (신규)
     QPushButton  *m_reportBtn;
+    QPushButton  *m_csvBtn;
 
     LogParser     m_parser;
     QString       m_currentFile;  // 현재 선택된 파일 경로

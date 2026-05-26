@@ -13,6 +13,9 @@
 #include <QTableWidgetItem>
 #include <QColor>
 #include <QStatusBar>
+#include <QFile>
+#include <QTextStream>
+#include <QDir>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -91,6 +94,7 @@ void MainWindow::setupToolBar()
     m_addFileBtn    = new QPushButton("📄 파일 추가", this);
     m_removeFileBtn = new QPushButton("🗑 파일 제거", this);
     m_parseBtn      = new QPushButton("▶ 파싱 시작", this);
+    m_csvBtn        = new QPushButton("📥 CSV 내보내기", this);
     m_reportBtn     = new QPushButton("📊 리포트 생성", this);
 
     const QString btnStyle =
@@ -101,6 +105,7 @@ void MainWindow::setupToolBar()
     m_addFileBtn->setStyleSheet(btnStyle);
     m_removeFileBtn->setStyleSheet(btnStyle);
     m_parseBtn->setStyleSheet(btnStyle);
+    m_csvBtn->setStyleSheet(btnStyle);
     m_reportBtn->setStyleSheet(btnStyle);
 
     // 파싱 버튼은 초기에 숨김 (대용량 파일 선택 시에만 표시)
@@ -113,11 +118,13 @@ void MainWindow::setupToolBar()
     toolBar->addWidget(m_removeFileBtn);
     toolBar->addWidget(m_parseBtn);
     toolBar->addWidget(spacer);
+    toolBar->addWidget(m_csvBtn);
     toolBar->addWidget(m_reportBtn);
 
     connect(m_addFileBtn,    &QPushButton::clicked, this, &MainWindow::onAddFile);
     connect(m_removeFileBtn, &QPushButton::clicked, this, &MainWindow::onRemoveFile);
     connect(m_parseBtn,      &QPushButton::clicked, this, &MainWindow::onParseFile);
+    connect(m_csvBtn,        &QPushButton::clicked, this, &MainWindow::onExportCsv);
     connect(m_reportBtn,     &QPushButton::clicked, this, &MainWindow::onGenerateReport);
 }
 
@@ -125,7 +132,8 @@ void MainWindow::setupToolBar()
 void MainWindow::onAddFile()
 {
     QStringList files = QFileDialog::getOpenFileNames(
-        this, "로그 파일 선택", "", "로그 파일 (*.log *.txt);;모든 파일 (*)");
+        this, "로그 파일 선택", "",
+        "로그/CSV 파일 (*.log *.txt *.csv);;모든 파일 (*)");  // ★ *.csv 추가
 
     for (const QString &path : files) {
         if (m_fileListWidget->findItems(path, Qt::MatchExactly).isEmpty())
@@ -238,7 +246,71 @@ void MainWindow::populateTable(const QVector<LogEntry> &entries)
         }
     }
 }
+// ── CSV 내보내기 ─────────────────────────────────────────
+void MainWindow::onExportCsv()
+{
+    if (m_logTableWidget->rowCount() == 0) {
+        QMessageBox::information(this, "알림", "내보낼 데이터가 없습니다.");
+        return;
+    }
 
+    // 기본 파일명: 원본 로그 파일명 + .csv
+    QFileInfo fi(m_currentFile);
+    QString defaultName = m_currentFile.isEmpty()
+                              ? "export.csv"
+                              : fi.completeBaseName() + ".csv";
+
+    QString defaultDir = m_currentFile.isEmpty()
+                             ? QDir::homePath()
+                             : QFileInfo(m_currentFile).absolutePath();
+
+    QString savePath = QFileDialog::getSaveFileName(
+        this, "CSV 저장", defaultDir + "/" + defaultName, "CSV 파일 (*.csv)");
+
+    if (savePath.isEmpty())
+        return;
+
+    QFile file(savePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "오류",
+                             "파일을 저장할 수 없습니다:\n" + savePath);
+        return;
+    }
+
+    QTextStream out(&file);
+    out.setEncoding(QStringConverter::Utf8);
+
+    // BOM 추가 — 엑셀에서 한글 깨짐 방지
+    out << "\xEF\xBB\xBF";
+
+    // 헤더
+    out << "날짜,시간,레벨,모듈,메시지\n";
+
+    // 데이터 행
+    for (int row = 0; row < m_logTableWidget->rowCount(); ++row) {
+        QStringList fields;
+        for (int col = 0; col < 5; ++col) {
+            QTableWidgetItem *cell = m_logTableWidget->item(row, col);
+            QString text = cell ? cell->text() : QString();
+
+            // RFC 4180: 쉼표/따옴표/줄바꿈 포함 시 따옴표로 감싸기
+            if (text.contains(',') || text.contains('"') || text.contains('\n')) {
+                text.replace("\"", "\"\"");   // 따옴표 이스케이프
+                text = "\"" + text + "\"";
+            }
+            fields.append(text);
+        }
+        out << fields.join(',') << '\n';
+    }
+
+    file.close();
+
+    statusBar()->showMessage(
+        QString("CSV 저장 완료: %1 (%2행)")
+            .arg(QFileInfo(savePath).fileName())
+            .arg(m_logTableWidget->rowCount())
+        );
+}
 void MainWindow::onGenerateReport()
 {
     QMessageBox::information(this, "리포트", "리포트 생성 기능은 추후 구현됩니다.");
