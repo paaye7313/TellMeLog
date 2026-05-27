@@ -137,6 +137,28 @@ QVector<LogEntry> LogParser::parseCsv(QFile &file)
             msgParts.append(fields[i]);
         entry.message = msgParts.join(' ').trimmed();
 
+        // ── 날짜 형식 검증 ──
+        static const QRegularExpression reDateValid(
+            R"(^\d{4}[-/]\d{2}[-/]\d{2}$|^\d{2}/\d{2}/\d{4}$|^\d{4}-\d{2}-\d{2}T)"
+            );
+        if (!reDateValid.match(entry.date).hasMatch()) {
+            entry.parsed = false;
+            entry.message = fields.join(',');
+            ++m_noiseCount;
+            return entry;
+        }
+
+        // ── 레벨 검증 ──
+        static const QStringList validLevels = {
+            "ERROR", "WARN", "WARNING", "INFO", "DEBUG", "TRACE", "FATAL", "CRITICAL"
+        };
+        if (!validLevels.contains(entry.level.toUpper())) {
+            entry.parsed = false;
+            entry.message = fields.join(',');
+            ++m_noiseCount;
+            return entry;
+        }
+
         entry.parsed = true;
         return entry;
     };
@@ -144,7 +166,6 @@ QVector<LogEntry> LogParser::parseCsv(QFile &file)
     // 첫 데이터 줄 처리
     {
         LogEntry e = parseFields(firstFields);
-        if (!e.parsed) ++m_noiseCount;
         entries.append(e);
     }
 
@@ -155,7 +176,6 @@ QVector<LogEntry> LogParser::parseCsv(QFile &file)
 
         QStringList fields = splitCsvLine(line);
         LogEntry e = parseFields(fields);
-        if (!e.parsed) ++m_noiseCount;
         entries.append(e);
     }
 

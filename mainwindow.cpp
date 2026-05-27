@@ -16,21 +16,21 @@
 #include <QFile>
 #include <QTextStream>
 #include <QDir>
+#include <QFrame>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle("TellMeLog - 로그야 뭐라고");
-    resize(1100, 650);
+    resize(1200, 700);
     setupUI();
     setupToolBar();
-
-    // 상태바 초기 메시지
     statusBar()->showMessage("파일을 추가하세요.");
 }
 
 MainWindow::~MainWindow() {}
 
+// ── UI 전체 구성 ─────────────────────────────────────────
 void MainWindow::setupUI()
 {
     // ── 좌측: 파일 목록 ──
@@ -53,17 +53,174 @@ void MainWindow::setupUI()
     leftLayout->addWidget(fileListLabel);
     leftLayout->addWidget(m_fileListWidget);
 
-    // ── 우측: 로그 테이블 ──
+    // ── 우측 패널 ──
     QWidget *rightPanel = new QWidget(this);
     QVBoxLayout *rightLayout = new QVBoxLayout(rightPanel);
     rightLayout->setContentsMargins(4, 4, 4, 4);
+    rightLayout->setSpacing(4);
 
     QLabel *tableLabel = new QLabel("📋 파싱 결과", rightPanel);
     tableLabel->setStyleSheet("font-weight: bold; padding: 4px;");
 
+    // ── 필터 바 ★ ──
+    // ── 필터 바 (2줄) ★ ──
+    QWidget *filterBarWrap = new QWidget(rightPanel);
+    QVBoxLayout *filterWrapLayout = new QVBoxLayout(filterBarWrap);
+    filterWrapLayout->setContentsMargins(0, 0, 0, 0);
+    filterWrapLayout->setSpacing(3);
+
+    const QString frameStyle =
+        "QFrame { background-color: #f5f8fc; border: 1px solid #d0dce8;"
+        "         border-radius: 6px; padding: 2px; }";
+    const QString labelStyle = "font-weight: bold; color: #555;";
+
+    auto makeSep = [&](QWidget *parent) -> QFrame* {
+        QFrame *sep = new QFrame(parent);
+        sep->setFrameShape(QFrame::VLine);
+        sep->setStyleSheet("color: #ccc;");
+        return sep;
+    };
+
+    // ── 1줄: 레벨 + 정렬 ──
+    QFrame *row1 = new QFrame(filterBarWrap);
+    row1->setFrameShape(QFrame::StyledPanel);
+    row1->setStyleSheet(frameStyle);
+    QHBoxLayout *row1Layout = new QHBoxLayout(row1);
+    row1Layout->setContentsMargins(8, 4, 8, 4);
+    row1Layout->setSpacing(8);
+
+    QLabel *levelLabel = new QLabel("레벨:", row1);
+    levelLabel->setStyleSheet(labelStyle);
+
+    m_chkError = new QCheckBox("ERROR", row1);
+    m_chkWarn  = new QCheckBox("WARN",  row1);
+    m_chkInfo  = new QCheckBox("INFO",  row1);
+    m_chkNoise = new QCheckBox("노이즈", row1);
+
+    m_chkError->setChecked(true);
+    m_chkWarn->setChecked(true);
+    m_chkInfo->setChecked(true);
+    m_chkNoise->setChecked(true);
+
+    m_chkError->setStyleSheet("QCheckBox { color: #c0392b; font-weight: bold; }");
+    m_chkWarn->setStyleSheet ("QCheckBox { color: #e67e22; font-weight: bold; }");
+    m_chkInfo->setStyleSheet ("QCheckBox { color: #2980b9; font-weight: bold; }");
+    m_chkNoise->setStyleSheet("QCheckBox { color: #888888; }");
+
+    QLabel *sortLabel = new QLabel("정렬:", row1);
+    sortLabel->setStyleSheet(labelStyle);
+
+    m_sortCombo = new QComboBox(row1);
+    m_sortCombo->addItem("원본 순서", "original");  // ★ 기본값 (맨 위)
+    m_sortCombo->addItem("시간 오름차순 ↑", "asc");
+    m_sortCombo->addItem("시간 내림차순 ↓", "desc");
+    m_sortCombo->setStyleSheet("QComboBox { min-width: 130px; }");
+
+    row1Layout->addWidget(levelLabel);
+    row1Layout->addWidget(m_chkError);
+    row1Layout->addWidget(m_chkWarn);
+    row1Layout->addWidget(m_chkInfo);
+    row1Layout->addWidget(m_chkNoise);
+    row1Layout->addWidget(makeSep(row1));
+    row1Layout->addWidget(sortLabel);
+    row1Layout->addWidget(m_sortCombo);
+    row1Layout->addStretch();
+
+    // ── 2줄: 날짜 범위 + 시간 범위 + 초기화 ──
+    QFrame *row2 = new QFrame(filterBarWrap);
+    row2->setFrameShape(QFrame::StyledPanel);
+    row2->setStyleSheet(frameStyle);
+    QHBoxLayout *row2Layout = new QHBoxLayout(row2);
+    row2Layout->setContentsMargins(8, 4, 8, 4);
+    row2Layout->setSpacing(8);
+
+    // 날짜 범위
+    QLabel *dateLabel = new QLabel("날짜:", row2);
+    dateLabel->setStyleSheet(labelStyle);
+
+    m_dateFrom = new QDateEdit(row2);
+    m_dateTo   = new QDateEdit(row2);
+    m_dateFrom->setDisplayFormat("yyyy-MM-dd");
+    m_dateTo->setDisplayFormat("yyyy-MM-dd");
+    m_dateFrom->setCalendarPopup(true);
+    m_dateTo->setCalendarPopup(true);
+    m_dateFrom->setDate(QDate(2000, 1, 1));
+    m_dateTo->setDate(QDate(2099, 12, 31));
+    m_dateFrom->setStyleSheet("QDateEdit { min-width: 110px; }");
+    m_dateTo->setStyleSheet  ("QDateEdit { min-width: 110px; }");
+
+    QLabel *dateTild = new QLabel("~", row2);
+    dateTild->setAlignment(Qt::AlignCenter);
+
+    // 시간 범위
+    QLabel *timeLabel = new QLabel("시간:", row2);
+    timeLabel->setStyleSheet(labelStyle);
+
+    m_timeFrom = new QTimeEdit(row2);
+    m_timeTo   = new QTimeEdit(row2);
+    m_timeFrom->setDisplayFormat("HH:mm:ss");
+    m_timeTo->setDisplayFormat("HH:mm:ss");
+    m_timeFrom->setTime(QTime(0, 0, 0));
+    m_timeTo->setTime(QTime(23, 59, 59));
+    m_timeFrom->setStyleSheet("QTimeEdit { min-width: 90px; }");
+    m_timeTo->setStyleSheet  ("QTimeEdit { min-width: 90px; }");
+
+    QLabel *timeTild = new QLabel("~", row2);
+    timeTild->setAlignment(Qt::AlignCenter);
+
+    // 초기화 버튼
+    m_btnResetTime = new QPushButton("↺ 초기화", row2);
+    m_btnResetTime->setToolTip("날짜/시간 범위 초기화");
+    m_btnResetTime->setStyleSheet(
+        "QPushButton { padding: 3px 8px; border-radius: 4px; }"
+        "QPushButton:hover { background-color: #d0e8ff; }"
+        );
+
+    row2Layout->addWidget(dateLabel);
+    row2Layout->addWidget(m_dateFrom);
+    row2Layout->addWidget(dateTild);
+    row2Layout->addWidget(m_dateTo);
+    row2Layout->addWidget(makeSep(row2));
+    row2Layout->addWidget(timeLabel);
+    row2Layout->addWidget(m_timeFrom);
+    row2Layout->addWidget(timeTild);
+    row2Layout->addWidget(m_timeTo);
+    row2Layout->addWidget(m_btnResetTime);
+    row2Layout->addStretch();
+
+    filterWrapLayout->addWidget(row1);
+    filterWrapLayout->addWidget(row2);
+
+    // ── 시그널 연결 ──
+    connect(m_chkError, &QCheckBox::checkStateChanged, this, &MainWindow::applyFilters);
+    connect(m_chkWarn,  &QCheckBox::checkStateChanged, this, &MainWindow::applyFilters);
+    connect(m_chkInfo,  &QCheckBox::checkStateChanged, this, &MainWindow::applyFilters);
+    connect(m_chkNoise, &QCheckBox::checkStateChanged, this, &MainWindow::applyFilters);
+    connect(m_dateFrom, &QDateEdit::dateChanged,       this, &MainWindow::applyFilters);
+    connect(m_dateTo,   &QDateEdit::dateChanged,       this, &MainWindow::applyFilters);
+    connect(m_timeFrom, &QTimeEdit::timeChanged,       this, &MainWindow::applyFilters);
+    connect(m_timeTo,   &QTimeEdit::timeChanged,       this, &MainWindow::applyFilters);
+    connect(m_sortCombo, &QComboBox::currentIndexChanged, this, &MainWindow::applyFilters);
+    connect(m_btnResetTime, &QPushButton::clicked, this, [this]() {
+        m_dateFrom->blockSignals(true);
+        m_dateTo->blockSignals(true);
+        m_timeFrom->blockSignals(true);
+        m_timeTo->blockSignals(true);
+        m_dateFrom->setDate(QDate(2000, 1, 1));
+        m_dateTo->setDate(QDate(2099, 12, 31));
+        m_timeFrom->setTime(QTime(0, 0, 0));
+        m_timeTo->setTime(QTime(23, 59, 59));
+        m_dateFrom->blockSignals(false);
+        m_dateTo->blockSignals(false);
+        m_timeFrom->blockSignals(false);
+        m_timeTo->blockSignals(false);
+        applyFilters();
+    });
+
+    // ── 테이블 위젯 ──
     m_logTableWidget = new QTableWidget(0, 5, rightPanel);
     m_logTableWidget->setHorizontalHeaderLabels({"날짜", "시간", "레벨", "모듈", "메시지"});
-    m_logTableWidget->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch); // 메시지 컬럼 인덱스 4로 변경
+    m_logTableWidget->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
     m_logTableWidget->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_logTableWidget->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_logTableWidget->setAlternatingRowColors(true);
@@ -73,6 +230,7 @@ void MainWindow::setupUI()
         );
 
     rightLayout->addWidget(tableLabel);
+    rightLayout->addWidget(filterBarWrap);      // ★ 필터 바
     rightLayout->addWidget(m_logTableWidget);
 
     // ── 스플리터 ──
@@ -85,6 +243,9 @@ void MainWindow::setupUI()
 
     setCentralWidget(splitter);
 }
+
+// ── setupFilterBar 별도 함수로 빼지 않음 (setupUI 내에 통합) ──
+void MainWindow::setupFilterBar() {} // 빈 구현 (헤더 선언 유지용)
 
 void MainWindow::setupToolBar()
 {
@@ -108,7 +269,6 @@ void MainWindow::setupToolBar()
     m_csvBtn->setStyleSheet(btnStyle);
     m_reportBtn->setStyleSheet(btnStyle);
 
-    // 파싱 버튼은 초기에 숨김 (대용량 파일 선택 시에만 표시)
     m_parseBtn->setVisible(false);
 
     QWidget *spacer = new QWidget(this);
@@ -133,11 +293,22 @@ void MainWindow::onAddFile()
 {
     QStringList files = QFileDialog::getOpenFileNames(
         this, "로그 파일 선택", "",
-        "로그/CSV 파일 (*.log *.txt *.csv);;모든 파일 (*)");  // ★ *.csv 추가
+        "로그/CSV 파일 (*.log *.txt *.csv);;모든 파일 (*)");
 
     for (const QString &path : files) {
-        if (m_fileListWidget->findItems(path, Qt::MatchExactly).isEmpty())
-            m_fileListWidget->addItem(path);
+        // 전체 경로로 중복 체크 (툴팁 기준)
+        bool alreadyExists = false;
+        for (int i = 0; i < m_fileListWidget->count(); ++i) {
+            if (m_fileListWidget->item(i)->toolTip() == path) {
+                alreadyExists = true;
+                break;
+            }
+        }
+        if (alreadyExists) continue;
+
+        QListWidgetItem *item = new QListWidgetItem(QFileInfo(path).fileName());
+        item->setToolTip(path);   // 전체 경로는 툴팁으로
+        m_fileListWidget->addItem(item);
     }
 }
 
@@ -150,19 +321,18 @@ void MainWindow::onRemoveFile()
         return;
     }
 
-    // 확인 다이얼로그
     QMessageBox::StandardButton reply = QMessageBox::question(
-        this,
-        "파일 제거",
-        QString("'%1'\n목록에서 제거하시겠습니까?").arg(selected->text()),
-        QMessageBox::Yes | QMessageBox::No
-        );
+        this, "파일 제거",
+        QString("'%1'\n(%2)\n목록에서 제거하시겠습니까?")
+                .arg(selected->text())       // 파일명
+                .arg(selected->toolTip()),    // 전체 경로
+        QMessageBox::Yes | QMessageBox::No);
 
-    if (reply != QMessageBox::Yes)
-        return;
+    if (reply != QMessageBox::Yes) return;
 
     delete m_fileListWidget->takeItem(m_fileListWidget->row(selected));
     m_logTableWidget->setRowCount(0);
+    m_allEntries.clear();   // ★
     m_parseBtn->setVisible(false);
     m_currentFile.clear();
     statusBar()->showMessage("파일이 제거되었습니다.");
@@ -171,22 +341,20 @@ void MainWindow::onRemoveFile()
 // ── 파일 선택 시 ─────────────────────────────────────────
 void MainWindow::onFileSelected(QListWidgetItem *item)
 {
-    m_currentFile = item->text();
+    m_currentFile = item->toolTip();
     QFileInfo fi(m_currentFile);
 
     if (fi.size() <= AUTO_PARSE_LIMIT) {
-        // 소용량 → 즉시 자동 파싱
         m_parseBtn->setVisible(false);
         statusBar()->showMessage(QString("파싱 중... (%1)").arg(fi.fileName()));
         parseAndDisplay(m_currentFile);
     } else {
-        // 대용량 → 버튼 표시하고 대기
         m_parseBtn->setVisible(true);
         m_logTableWidget->setRowCount(0);
+        m_allEntries.clear();
         statusBar()->showMessage(
             QString("대용량 파일 (%1 MB) — [▶ 파싱 시작] 버튼을 누르세요.")
-                .arg(fi.size() / 1024.0 / 1024.0, 0, 'f', 1)
-            );
+                .arg(fi.size() / 1024.0 / 1024.0, 0, 'f', 1));
     }
 }
 
@@ -202,23 +370,143 @@ void MainWindow::onParseFile()
 // ── 실제 파싱 + 테이블 표시 ──────────────────────────────
 void MainWindow::parseAndDisplay(const QString &filePath)
 {
-    QVector<LogEntry> entries = m_parser.parse(filePath);
-    populateTable(entries);
+    m_allEntries = m_parser.parse(filePath);  // ★ 전체 보관
+
+    // 파싱 결과에서 시간 범위 자동 감지 → DateTimeEdit 초기값 설정
+    // (노이즈 제외하고 유효한 날짜만)
+    QDateTime minDt, maxDt;
+    for (const LogEntry &e : m_allEntries) {
+        if (!e.parsed) continue;
+        // "yyyy-MM-dd" + "HH:mm:ss.zzz" 조합
+        QString dtStr = e.date + " " + e.timestamp;
+        QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
+        if (!dt.isValid())
+            dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
+        if (!dt.isValid()) continue;
+
+        if (!minDt.isValid() || dt < minDt) minDt = dt;
+        if (!maxDt.isValid() || dt > maxDt) maxDt = dt;
+    }
+
+    // 유효한 범위가 감지되면 DateTimeEdit에 반영 (시그널 블록)
+    if (minDt.isValid() && maxDt.isValid()) {
+        m_dateFrom->blockSignals(true);
+        m_dateTo->blockSignals(true);
+        m_timeFrom->blockSignals(true);
+        m_timeTo->blockSignals(true);
+        m_dateFrom->setDate(minDt.date());
+        m_dateTo->setDate(maxDt.date());
+        m_timeFrom->setTime(minDt.time());
+        m_timeTo->setTime(maxDt.time());
+        m_dateFrom->blockSignals(false);
+        m_dateTo->blockSignals(false);
+        m_timeFrom->blockSignals(false);
+        m_timeTo->blockSignals(false);
+    }
+
+    applyFilters();  // ★ 필터 적용해서 테이블 갱신
 
     QFileInfo fi(filePath);
     statusBar()->showMessage(
         QString("%1 — %2줄 파싱 완료 (노이즈: %3줄)")
             .arg(fi.fileName())
-            .arg(entries.size())
-            .arg(m_parser.noiseCount())
-        );
+            .arg(m_allEntries.size())
+            .arg(m_parser.noiseCount()));
     setWindowTitle("TellMeLog — " + fi.fileName());
+}
+
+// ── 필터 + 정렬 적용 ★ ──────────────────────────────────
+void MainWindow::applyFilters()
+{
+    if (m_allEntries.isEmpty()) return;
+
+    bool showError = m_chkError->isChecked();
+    bool showWarn  = m_chkWarn->isChecked();
+    bool showInfo  = m_chkInfo->isChecked();
+    bool showNoise = m_chkNoise->isChecked();
+    QString sortMode = m_sortCombo->currentData().toString();
+
+    QDateTime dtFrom(m_dateFrom->date(), m_timeFrom->time());
+    QDateTime dtTo  (m_dateTo->date(),   m_timeTo->time());
+
+    // 필터링
+    QVector<LogEntry> filtered;
+    filtered.reserve(m_allEntries.size());
+
+    for (const LogEntry &e : m_allEntries) {
+        // 레벨 필터
+        if (!e.parsed) {
+            if (!showNoise) continue;
+        } else if (e.level == "ERROR") {
+            if (!showError) continue;
+        } else if (e.level == "WARN") {
+            if (!showWarn) continue;
+        } else {
+            // INFO, DEBUG 등 나머지
+            if (!showInfo) continue;
+        }
+
+        // 시간 범위 필터 (파싱된 줄만 적용, 노이즈는 통과)
+        if (e.parsed) {
+            QString dtStr = e.date + " " + e.timestamp;
+            QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
+            if (!dt.isValid())
+                dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
+            if (dt.isValid()) {
+                if (dt < dtFrom || dt > dtTo) continue;
+            }
+        }
+
+        filtered.append(e);
+    }
+
+    // 정렬 (시간 기준)
+    auto toDateTime = [](const LogEntry &e) -> QDateTime {
+        // DD/MM/YYYY 형식은 yyyy-MM-dd 로 정규화 후 파싱
+        QString dateStr = e.date;
+        static const QRegularExpression reDMY(R"(^(\d{2})/(\d{2})/(\d{4})$)");
+        QRegularExpressionMatch m = reDMY.match(dateStr);
+        if (m.hasMatch())
+            dateStr = m.captured(3) + "-" + m.captured(2) + "-" + m.captured(1);
+
+        QString dtStr = dateStr + " " + e.timestamp;
+
+        QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
+        if (!dt.isValid())
+            dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
+        if (!dt.isValid())
+            dt = QDateTime::fromString(dtStr, "yyyy/MM/dd HH:mm:ss.zzz");
+        if (!dt.isValid())
+            dt = QDateTime::fromString(dtStr, "yyyy/MM/dd HH:mm:ss");
+        return dt;
+    };
+
+    if (sortMode != "original") {
+        std::sort(filtered.begin(), filtered.end(),
+                  [&](const LogEntry &a, const LogEntry &b) {
+                      QDateTime da = toDateTime(a);
+                      QDateTime db = toDateTime(b);
+                      if (!da.isValid() && !db.isValid()) return false;
+                      if (!da.isValid()) return false;
+                      if (!db.isValid()) return true;
+                      return (sortMode == "desc") ? da > db : da < db;
+                  });
+    }
+    // "original"이면 filtered는 m_allEntries 순서 그대로 (필터링만 적용)
+
+    populateTable(filtered);
+
+    // 상태바에 필터 결과 반영
+    statusBar()->showMessage(
+        QString("표시: %1줄 / 전체: %2줄")
+            .arg(filtered.size())
+            .arg(m_allEntries.size()));
 }
 
 // ── 테이블 채우기 ────────────────────────────────────────
 void MainWindow::populateTable(const QVector<LogEntry> &entries)
 {
-    m_logTableWidget->setRowCount(0); // 기존 내용 초기화
+    m_logTableWidget->setRowCount(0);
 
     for (const LogEntry &entry : entries) {
         int row = m_logTableWidget->rowCount();
@@ -230,14 +518,13 @@ void MainWindow::populateTable(const QVector<LogEntry> &entries)
         m_logTableWidget->setItem(row, 3, new QTableWidgetItem(entry.module));
         m_logTableWidget->setItem(row, 4, new QTableWidgetItem(entry.message));
 
-        // 레벨별 행 색상
         QColor rowColor;
         if (!entry.parsed) {
-            rowColor = QColor("#f0f0f0"); // 노이즈: 회색
+            rowColor = QColor("#f0f0f0");
         } else if (entry.level == "ERROR") {
-            rowColor = QColor("#ffe0e0"); // 빨강 계열
+            rowColor = QColor("#ffe0e0");
         } else if (entry.level == "WARN") {
-            rowColor = QColor("#fff4cc"); // 노랑 계열
+            rowColor = QColor("#fff4cc");
         }
 
         if (rowColor.isValid()) {
@@ -246,6 +533,7 @@ void MainWindow::populateTable(const QVector<LogEntry> &entries)
         }
     }
 }
+
 // ── CSV 내보내기 ─────────────────────────────────────────
 void MainWindow::onExportCsv()
 {
@@ -254,48 +542,37 @@ void MainWindow::onExportCsv()
         return;
     }
 
-    // 기본 파일명: 원본 로그 파일명 + .csv
     QFileInfo fi(m_currentFile);
     QString defaultName = m_currentFile.isEmpty()
                               ? "export.csv"
                               : fi.completeBaseName() + ".csv";
-
     QString defaultDir = m_currentFile.isEmpty()
                              ? QDir::homePath()
-                             : QFileInfo(m_currentFile).absolutePath();
+                             : fi.absolutePath();
 
     QString savePath = QFileDialog::getSaveFileName(
         this, "CSV 저장", defaultDir + "/" + defaultName, "CSV 파일 (*.csv)");
 
-    if (savePath.isEmpty())
-        return;
+    if (savePath.isEmpty()) return;
 
     QFile file(savePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, "오류",
-                             "파일을 저장할 수 없습니다:\n" + savePath);
+        QMessageBox::warning(this, "오류", "파일을 저장할 수 없습니다:\n" + savePath);
         return;
     }
 
     QTextStream out(&file);
     out.setEncoding(QStringConverter::Utf8);
-
-    // BOM 추가 — 엑셀에서 한글 깨짐 방지
     out << "\xEF\xBB\xBF";
-
-    // 헤더
     out << "날짜,시간,레벨,모듈,메시지\n";
 
-    // 데이터 행
     for (int row = 0; row < m_logTableWidget->rowCount(); ++row) {
         QStringList fields;
         for (int col = 0; col < 5; ++col) {
             QTableWidgetItem *cell = m_logTableWidget->item(row, col);
             QString text = cell ? cell->text() : QString();
-
-            // RFC 4180: 쉼표/따옴표/줄바꿈 포함 시 따옴표로 감싸기
             if (text.contains(',') || text.contains('"') || text.contains('\n')) {
-                text.replace("\"", "\"\"");   // 따옴표 이스케이프
+                text.replace("\"", "\"\"");
                 text = "\"" + text + "\"";
             }
             fields.append(text);
@@ -304,13 +581,12 @@ void MainWindow::onExportCsv()
     }
 
     file.close();
-
     statusBar()->showMessage(
         QString("CSV 저장 완료: %1 (%2행)")
             .arg(QFileInfo(savePath).fileName())
-            .arg(m_logTableWidget->rowCount())
-        );
+            .arg(m_logTableWidget->rowCount()));
 }
+
 void MainWindow::onGenerateReport()
 {
     QMessageBox::information(this, "리포트", "리포트 생성 기능은 추후 구현됩니다.");
