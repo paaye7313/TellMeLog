@@ -12,6 +12,7 @@
 #include <QComboBox>      // ★ 추가
 #include <QDateEdit>
 #include <QTimeEdit>
+#include <QLineEdit>   // ★ 추가
 #include "logparser.h"
 
 static constexpr qint64 AUTO_PARSE_LIMIT = 1 * 1024 * 1024;
@@ -61,6 +62,8 @@ private:
     QTimeEdit  *m_timeTo;
     QPushButton    *m_btnResetTime;   // 시간 범위 초기화
     QComboBox      *m_sortCombo;      // 정렬 방향
+    QLineEdit      *m_searchEdit;     // ★ 검색창
+    QComboBox      *m_searchScopeCombo; // ★ 검색 범위
 
     // ── 데이터 ──
     LogParser          m_parser;

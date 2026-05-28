@@ -17,6 +17,7 @@
 #include <QTextStream>
 #include <QDir>
 #include <QFrame>
+#include <QLineEdit>   // ★ 추가
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -124,6 +125,24 @@ void MainWindow::setupUI()
     row1Layout->addWidget(makeSep(row1));
     row1Layout->addWidget(sortLabel);
     row1Layout->addWidget(m_sortCombo);
+    row1Layout->addWidget(makeSep(row1));   // ★ 검색 구분선
+
+    // ★ 검색창
+    QLabel *searchLabel = new QLabel("🔍", row1);
+    m_searchEdit = new QLineEdit(row1);
+    m_searchEdit->setPlaceholderText("검색어 입력...");
+    m_searchEdit->setClearButtonEnabled(true);
+    m_searchEdit->setStyleSheet("QLineEdit { min-width: 160px; padding: 2px 4px; border-radius: 4px; border: 1px solid #b0c8e0; }");
+
+    m_searchScopeCombo = new QComboBox(row1);
+    m_searchScopeCombo->addItem("전체",   "all");
+    m_searchScopeCombo->addItem("모듈",   "module");
+    m_searchScopeCombo->addItem("메시지", "message");
+    m_searchScopeCombo->setStyleSheet("QComboBox { min-width: 70px; }");
+
+    row1Layout->addWidget(searchLabel);
+    row1Layout->addWidget(m_searchEdit);
+    row1Layout->addWidget(m_searchScopeCombo);
     row1Layout->addStretch();
 
     // ── 2줄: 날짜 범위 + 시간 범위 + 초기화 ──
@@ -169,8 +188,8 @@ void MainWindow::setupUI()
     timeTild->setAlignment(Qt::AlignCenter);
 
     // 초기화 버튼
-    m_btnResetTime = new QPushButton("↺ 초기화", row2);
-    m_btnResetTime->setToolTip("날짜/시간 범위 초기화");
+    m_btnResetTime = new QPushButton("↺ 전체 초기화", row2);
+    m_btnResetTime->setToolTip("레벨·검색·날짜·시간 전체 초기화");
     m_btnResetTime->setStyleSheet(
         "QPushButton { padding: 3px 8px; border-radius: 4px; }"
         "QPushButton:hover { background-color: #d0e8ff; }"
@@ -201,7 +220,38 @@ void MainWindow::setupUI()
     connect(m_timeFrom, &QTimeEdit::timeChanged,       this, &MainWindow::applyFilters);
     connect(m_timeTo,   &QTimeEdit::timeChanged,       this, &MainWindow::applyFilters);
     connect(m_sortCombo, &QComboBox::currentIndexChanged, this, &MainWindow::applyFilters);
+    // ★ 검색 시그널
+    connect(m_searchEdit,       &QLineEdit::textChanged,           this, &MainWindow::applyFilters);
+    connect(m_searchScopeCombo, &QComboBox::currentIndexChanged,   this, &MainWindow::applyFilters);
     connect(m_btnResetTime, &QPushButton::clicked, this, [this]() {
+        // 레벨 체크박스
+        m_chkError->blockSignals(true);
+        m_chkWarn->blockSignals(true);
+        m_chkInfo->blockSignals(true);
+        m_chkNoise->blockSignals(true);
+        m_chkError->setChecked(true);
+        m_chkWarn->setChecked(true);
+        m_chkInfo->setChecked(true);
+        m_chkNoise->setChecked(true);
+        m_chkError->blockSignals(false);
+        m_chkWarn->blockSignals(false);
+        m_chkInfo->blockSignals(false);
+        m_chkNoise->blockSignals(false);
+
+        // 정렬
+        m_sortCombo->blockSignals(true);
+        m_sortCombo->setCurrentIndex(0);  // 원본 순서
+        m_sortCombo->blockSignals(false);
+
+        // 검색
+        m_searchEdit->blockSignals(true);
+        m_searchEdit->clear();
+        m_searchEdit->blockSignals(false);
+        m_searchScopeCombo->blockSignals(true);
+        m_searchScopeCombo->setCurrentIndex(0);  // 전체
+        m_searchScopeCombo->blockSignals(false);
+
+        // 날짜/시간
         m_dateFrom->blockSignals(true);
         m_dateTo->blockSignals(true);
         m_timeFrom->blockSignals(true);
@@ -214,6 +264,7 @@ void MainWindow::setupUI()
         m_dateTo->blockSignals(false);
         m_timeFrom->blockSignals(false);
         m_timeTo->blockSignals(false);
+
         applyFilters();
     });
 
@@ -324,8 +375,8 @@ void MainWindow::onRemoveFile()
     QMessageBox::StandardButton reply = QMessageBox::question(
         this, "파일 제거",
         QString("'%1'\n(%2)\n목록에서 제거하시겠습니까?")
-                .arg(selected->text())       // 파일명
-                .arg(selected->toolTip()),    // 전체 경로
+            .arg(selected->text())       // 파일명
+            .arg(selected->toolTip()),    // 전체 경로
         QMessageBox::Yes | QMessageBox::No);
 
     if (reply != QMessageBox::Yes) return;
@@ -426,6 +477,10 @@ void MainWindow::applyFilters()
     bool showNoise = m_chkNoise->isChecked();
     QString sortMode = m_sortCombo->currentData().toString();
 
+    // ★ 검색어
+    QString keyword     = m_searchEdit->text().trimmed();
+    QString searchScope = m_searchScopeCombo->currentData().toString();
+
     QDateTime dtFrom(m_dateFrom->date(), m_timeFrom->time());
     QDateTime dtTo  (m_dateTo->date(),   m_timeTo->time());
 
@@ -455,6 +510,23 @@ void MainWindow::applyFilters()
             if (dt.isValid()) {
                 if (dt < dtFrom || dt > dtTo) continue;
             }
+        }
+
+        // ★ 검색 필터
+        if (!keyword.isEmpty()) {
+            bool hit = false;
+            if (searchScope == "module") {
+                hit = e.module.contains(keyword, Qt::CaseInsensitive);
+            } else if (searchScope == "message") {
+                hit = e.message.contains(keyword, Qt::CaseInsensitive);
+            } else { // "all"
+                hit = e.module.contains(keyword, Qt::CaseInsensitive)
+                      || e.message.contains(keyword, Qt::CaseInsensitive)
+                      || e.level.contains(keyword, Qt::CaseInsensitive)
+                      || e.date.contains(keyword, Qt::CaseInsensitive)
+                      || e.timestamp.contains(keyword, Qt::CaseInsensitive);
+            }
+            if (!hit) continue;
         }
 
         filtered.append(e);
@@ -497,10 +569,12 @@ void MainWindow::applyFilters()
     populateTable(filtered);
 
     // 상태바에 필터 결과 반영
-    statusBar()->showMessage(
-        QString("표시: %1줄 / 전체: %2줄")
-            .arg(filtered.size())
-            .arg(m_allEntries.size()));
+    QString statusMsg = QString("표시: %1줄 / 전체: %2줄")
+                            .arg(filtered.size())
+                            .arg(m_allEntries.size());
+    if (!keyword.isEmpty())
+        statusMsg += QString("  |  🔍 \"%1\" (%2 범위)").arg(keyword).arg(m_searchScopeCombo->currentText());
+    statusBar()->showMessage(statusMsg);
 }
 
 // ── 테이블 채우기 ────────────────────────────────────────
