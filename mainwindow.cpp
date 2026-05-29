@@ -663,5 +663,9 @@ void MainWindow::onExportCsv()
 
 void MainWindow::onGenerateReport()
 {
-    QMessageBox::information(this, "리포트", "리포트 생성 기능은 추후 구현됩니다.");
+    if (m_allEntries.isEmpty()) {
+        QMessageBox::information(this, "알림", "파싱된 로그가 없습니다.");
+        return;
+    }
+    m_reportGen.generate(this, m_allEntries, m_currentFile);
 }

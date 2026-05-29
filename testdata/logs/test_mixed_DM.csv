@@ -1,0 +1,6 @@
+날짜,시간,레벨,모듈,메시지
+2025-05-21,09:00:01.001,INFO,DeviceManager,DEV-001 연결 성공 | Status: 0x00 | Temp: 23.8C
+2025-05-21,09:00:01.205,INFO,DeviceManager,DEV-002 연결 성공 | Status: 0x00 | Temp: 24.2C
+2025-05-21,09:00:01.500,INFO,DeviceManager,DEV-003 연결 시도 중... (DeviceID: DEV-003)
+2025-05-21,09:00:04.501,INFO,DeviceManager,DEV-003 오류 무시하고 계속 진행 (비필수 장치)
+2025-05-21,09:00:12.000,INFO,DeviceManager,DEV-002 온도 정상화 | Temp: 28.4C

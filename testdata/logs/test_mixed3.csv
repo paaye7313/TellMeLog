@@ -1,0 +1,9 @@
+날짜,시간,레벨,모듈,메시지
+2025-05-21,09:00:02.500,WARN,DeviceManager,DEV-003 응답 지연 (timeout: 1000ms) | retry: 1/3
+2025-05-21,09:00:03.500,WARN,DeviceManager,DEV-003 응답 지연 (timeout: 1000ms) | retry: 2/3
+2025-05-21,09:00:04.500,ERROR,DeviceManager,DEV-003 연결 실패 | Status: 0xE1 | 재시도 횟수 초과
+2025-05-21,09:00:06.500,WARN,TASK-101,CH1 전압 상승 감지 | CH1: 3.412V (임계값: 3.400V)
+2025-05-21,09:00:07.000,WARN,TASK-101,CH1 전압 상승 지속 | CH1: 3.445V
+2025-05-21,09:00:07.500,ERROR,TASK-101,CH1 전압 초과 | CH1: 3.521V | 허용범위 초과! 긴급 정지 명령 전송
+2025/05/21,09:00:09.000,WARN,DeviceManager,DEV-002 온도 상승 | Temp: 31.7C (경고: 30.0C)
+2025-05-21,09:00:10.200,ERROR,DeviceManager,DEV-002 온도 임계값 초과 | Temp: 35.2C | 강제 쿨링 ON

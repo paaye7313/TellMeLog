@@ -5,15 +5,16 @@ Qt/C++ 기반 로그 자동분석 데스크톱 툴 (포트폴리오용)
 
 ## 기술 스택
 - 언어: C++17
-- 프레임워크: Qt 6.5 LTS (Qt Widgets)
-- 주요 Qt 모듈: QFileSystemWatcher, QTableWidget, QFileDialog
-- 파싱: std::regex
-- 출력: CSV 저장, 리포트 생성
+- 프레임워크: Qt 6.11 (Qt Widgets)
+- 주요 Qt 모듈: QTableWidget, QFileDialog, QDateEdit, QTimeEdit, QSplitter
+- 파싱: QRegularExpression
+- 출력: CSV 저장, 리포트 생성 (예정)
 
 ## UI 구조
-- 좌측: 로그 파일 목록 패널
-- 우측: 파싱된 로그 테이블
-- 상단: 리포트 생성 버튼
+- 좌측: 로그 파일 목록 패널 (파일명 표시, 툴팁으로 전체 경로)
+- 우측 상단: 필터 바 (레벨/날짜/시간 범위/정렬)
+- 우측 하단: 파싱된 로그 테이블
+- 상단 툴바: 파일 추가/제거, 파싱, CSV 내보내기, 리포트 생성
 
 ## 개발 환경
 - OS: Windows
@@ -37,5 +38,3 @@ Qt/C++ 기반 로그 자동분석 데스크톱 툴 (포트폴리오용)
 - 컴파일러: MinGW 64-bit
 - 버전 관리: Git 적용
 - 프로젝트 경로: C:\paaye\TellMeLog
-- 현재 상태: 기본 빈 윈도우 실행 확인 완료
-- 다음 단계: UI 레이아웃 구성

@@ -14,6 +14,7 @@
 #include <QTimeEdit>
 #include <QLineEdit>   // ★ 추가
 #include "logparser.h"
+#include "reportgenerator.h"
 
 static constexpr qint64 AUTO_PARSE_LIMIT = 1 * 1024 * 1024;
 
@@ -69,6 +70,9 @@ private:
     LogParser          m_parser;
     QString            m_currentFile;
     QVector<LogEntry>  m_allEntries;  // ★ 전체 파싱 결과 보관
+
+    // ── 리포트 ──
+    ReportGenerator m_reportGen;
 };
 
 #endif // MAINWINDOW_H
