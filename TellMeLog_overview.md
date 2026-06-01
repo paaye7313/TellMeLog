@@ -8,7 +8,8 @@ Qt/C++ 기반 로그 자동분석 데스크톱 툴 (포트폴리오용)
 - 프레임워크: Qt 6.11 (Qt Widgets)
 - 주요 Qt 모듈: QTableWidget, QFileDialog, QDateEdit, QTimeEdit, QSplitter
 - 파싱: QRegularExpression
-- 출력: CSV 저장, 리포트 생성 (예정)
+- 출력: CSV 저장, PDF 리포트 생성 (QPrintPreviewDialog)
+- 추가 Qt 모듈: QPrinter, QPrintPreviewDialog, QTextDocument (PrintSupport)
 
 ## UI 구조
 - 좌측: 로그 파일 목록 패널 (파일명 표시, 툴팁으로 전체 경로)

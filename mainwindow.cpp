@@ -17,7 +17,83 @@
 #include <QTextStream>
 #include <QDir>
 #include <QFrame>
-#include <QLineEdit>   // ★ 추가
+#include <QLineEdit>        // ★ 추가
+#include <QPainter>         // 색상 뱃지
+#include <QStyledItemDelegate>
+#include <QApplication>
+#include <QMouseEvent>
+#include <QEvent>
+
+// ── 파일 목록 커스텀 델리게이트 ─────────────────────────────
+// 역할:
+//   1) 아이템 배경을 파일 고유 색으로 채움 (선택/호버도 해당 색 기준)
+//   2) 왼쪽에 체크박스를 직접 그림 (Qt 체크박스 스타일 사용)
+//   3) 체크박스 영역 / 텍스트 영역을 분리해서 클릭 구분에 사용
+class FileListDelegate : public QStyledItemDelegate
+{
+public:
+    static constexpr int CHECKBOX_WIDTH = 26; // 체크박스 영역 너비 (px), 여백 포함
+
+    explicit FileListDelegate(const QMap<QString, QColor> *colorMap, QObject *parent = nullptr)
+        : QStyledItemDelegate(parent), m_colorMap(colorMap) {}
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override
+    {
+        QString filePath = index.data(Qt::ToolTipRole).toString();
+        bool checked = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
+
+        // 체크됐을 때만 파일 고유 색상, 기본은 흰색
+        QColor baseColor = checked
+                               ? m_colorMap->value(filePath, QColor("#FFFFFF"))
+                               : QColor("#FFFFFF");
+
+        // 호버: 연한 회색 / 선택(하이라이트): baseColor 기준으로 진하게
+        QColor bgColor;
+        if (option.state & QStyle::State_Selected)
+            bgColor = checked ? baseColor.darker(115) : QColor("#EEEEEE");
+        else if (option.state & QStyle::State_MouseOver)
+            bgColor = checked ? baseColor.darker(105) : QColor("#F5F5F5");
+        else
+            bgColor = baseColor;
+
+        painter->save();
+
+        // 1) 배경
+        painter->fillRect(option.rect, bgColor);
+
+        // 2) 체크박스 그리기 (시스템 스타일 사용)
+        QStyleOptionButton cbOpt;
+        cbOpt.rect = checkBoxRect(option.rect);
+        cbOpt.state = QStyle::State_Enabled;
+        cbOpt.state |= checked ? QStyle::State_On : QStyle::State_Off;
+        QApplication::style()->drawPrimitive(QStyle::PE_IndicatorCheckBox, &cbOpt, painter);
+
+        // 3) 텍스트 (체크박스와 4px 여백)
+        QRect textRect = option.rect.adjusted(CHECKBOX_WIDTH + 6, 0, -4, 0);
+        QString text = index.data(Qt::DisplayRole).toString();
+        painter->setPen(QColor("#000000"));
+        painter->setFont(option.font);
+        painter->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
+                          option.fontMetrics.elidedText(text, Qt::ElideRight, textRect.width()));
+
+        painter->restore();
+    }
+
+    // 체크박스 영역 반환 (MainWindow에서 클릭 구분에도 사용)
+    static QRect checkBoxRect(const QRect &itemRect)
+    {
+        int cbSize = 16;
+        int x = itemRect.left() + 5;
+        int y = itemRect.top() + (itemRect.height() - cbSize) / 2;
+        return QRect(x, y, cbSize, cbSize);
+    }
+
+private:
+    const QMap<QString, QColor> *m_colorMap;
+};
+
+// ─────────────────────────────────────────────────────────────
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -43,13 +119,12 @@ void MainWindow::setupUI()
     fileListLabel->setStyleSheet("font-weight: bold; padding: 4px;");
 
     m_fileListWidget = new QListWidget(leftPanel);
-    m_fileListWidget->setAlternatingRowColors(true);
-    m_fileListWidget->setStyleSheet(
-        "QListWidget::item:selected { background-color: #cce4ff; color: #000000; }"
-        "QListWidget::item:hover    { background-color: #e8f4ff; color: #000000; }"
-        );
-    connect(m_fileListWidget, &QListWidget::itemClicked,
-            this, &MainWindow::onFileSelected);
+    m_fileListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_fileListWidget->setMouseTracking(true);  // 호버 감지에 필요
+    // ★ 커스텀 델리게이트 적용 (파일 색 배경 + 체크박스)
+    m_fileListWidget->setItemDelegate(new FileListDelegate(&m_fileColors, m_fileListWidget));
+    // ★ viewport에 이벤트 필터 설치 — 마우스 클릭 위치로 체크박스/텍스트 영역 직접 구분
+    m_fileListWidget->viewport()->installEventFilter(this);
 
     leftLayout->addWidget(fileListLabel);
     leftLayout->addWidget(m_fileListWidget);
@@ -291,12 +366,68 @@ void MainWindow::setupUI()
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 3);
     splitter->setHandleWidth(4);
+    splitter->setSizes({240, 960});  // ★ 좌측 패널 초기 너비 240px
 
     setCentralWidget(splitter);
 }
 
 // ── setupFilterBar 별도 함수로 빼지 않음 (setupUI 내에 통합) ──
 void MainWindow::setupFilterBar() {} // 빈 구현 (헤더 선언 유지용)
+
+// ── 파일 목록 클릭 처리 (체크박스 / 텍스트 영역 구분) ────────
+// itemPressed 대신 eventFilter를 사용하는 이유:
+//   - itemPressed는 발생 시점에 QCursor::pos()가 부정확할 수 있음
+//   - setCheckState()가 내부적으로 itemChanged를 발생시켜 이중 처리 발생 가능
+//   - eventFilter는 MouseButtonPress 시점의 정확한 pos()를 직접 사용
+bool MainWindow::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj == m_fileListWidget->viewport()
+        && event->type() == QEvent::MouseButtonPress)
+    {
+        QMouseEvent *me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton) {
+            QListWidgetItem *item = m_fileListWidget->itemAt(me->pos());
+            if (!item) return false;
+
+            QRect itemRect = m_fileListWidget->visualItemRect(item);
+            QRect cbRect   = FileListDelegate::checkBoxRect(itemRect);
+
+            if (cbRect.contains(me->pos())) {
+                // ── 체크박스 영역 클릭: 토글 후 체크된 파일 목록 갱신 ──
+                item->setCheckState(
+                    item->checkState() == Qt::Checked ? Qt::Unchecked : Qt::Checked);
+
+                QStringList checkedPaths;
+                for (int i = 0; i < m_fileListWidget->count(); ++i) {
+                    auto *it = m_fileListWidget->item(i);
+                    if (it->checkState() == Qt::Checked)
+                        checkedPaths << it->toolTip();
+                }
+
+                if (checkedPaths.isEmpty()) {
+                    m_logTableWidget->setRowCount(0);
+                    m_allEntries.clear();
+                    statusBar()->showMessage("파일을 체크하거나 선택하세요.");
+                } else if (checkedPaths.size() == 1) {
+                    m_currentFile = checkedPaths.first();
+                    parseAndDisplay(m_currentFile);
+                } else {
+                    mergeAndDisplay(checkedPaths);
+                }
+                return true;  // 이벤트 소비 (QListWidget 기본 선택 동작 방지)
+
+            } else {
+                // ── 텍스트/행 영역 클릭: 이 파일만 단독 표시 ──
+                for (int i = 0; i < m_fileListWidget->count(); ++i)
+                    m_fileListWidget->item(i)->setCheckState(Qt::Unchecked);
+                item->setCheckState(Qt::Checked);
+                onFileSelected(item);
+                return true;
+            }
+        }
+    }
+    return QMainWindow::eventFilter(obj, event);
+}
 
 void MainWindow::setupToolBar()
 {
@@ -342,12 +473,22 @@ void MainWindow::setupToolBar()
 // ── 파일 추가 ────────────────────────────────────────────
 void MainWindow::onAddFile()
 {
+    // 파일별 배경색 팔레트 (ERROR/WARN 색과 겹치지 않는 파스텔 계열)
+    static const QList<QColor> FILE_PALETTE = {
+        QColor("#FFFFFF"),   // 파일 1: 흰색 (기본)
+        QColor("#EBF5FB"),   // 파일 2: 하늘
+        QColor("#E8F8F5"),   // 파일 3: 민트
+        QColor("#F5EEF8"),   // 파일 4: 라벤더
+        QColor("#FEF9E7"),   // 파일 5: 연노랑
+        QColor("#FDFEFE"),   // 파일 6: 연회색
+    };
+
     QStringList files = QFileDialog::getOpenFileNames(
         this, "로그 파일 선택", "",
         "로그/CSV 파일 (*.log *.txt *.csv);;모든 파일 (*)");
 
     for (const QString &path : files) {
-        // 전체 경로로 중복 체크 (툴팁 기준)
+        // 전체 경로로 중복 체크
         bool alreadyExists = false;
         for (int i = 0; i < m_fileListWidget->count(); ++i) {
             if (m_fileListWidget->item(i)->toolTip() == path) {
@@ -357,8 +498,15 @@ void MainWindow::onAddFile()
         }
         if (alreadyExists) continue;
 
+        // 색상 배정 (현재 파일 수 기준 순환)
+        int colorIdx = m_fileColors.size() % FILE_PALETTE.size();
+        QColor assignedColor = FILE_PALETTE[colorIdx];
+        m_fileColors[path] = assignedColor;
+
+        // ★ 체크박스 방식 — 아이콘 뱃지 없이 아이템 생성
         QListWidgetItem *item = new QListWidgetItem(QFileInfo(path).fileName());
-        item->setToolTip(path);   // 전체 경로는 툴팁으로
+        item->setToolTip(path);
+        item->setCheckState(Qt::Unchecked);  // 체크박스 초기값: 해제
         m_fileListWidget->addItem(item);
     }
 }
@@ -366,24 +514,37 @@ void MainWindow::onAddFile()
 // ── 파일 제거 ────────────────────────────────────────────
 void MainWindow::onRemoveFile()
 {
-    QListWidgetItem *selected = m_fileListWidget->currentItem();
-    if (!selected) {
+    // 체크된 항목이 있으면 체크된 것들을 제거, 없으면 선택(하이라이트)된 항목 제거
+    QList<QListWidgetItem*> targets;
+    for (int i = 0; i < m_fileListWidget->count(); ++i) {
+        if (m_fileListWidget->item(i)->checkState() == Qt::Checked)
+            targets << m_fileListWidget->item(i);
+    }
+    if (targets.isEmpty()) {
+        QListWidgetItem *cur = m_fileListWidget->currentItem();
+        if (cur) targets << cur;
+    }
+    if (targets.isEmpty()) {
         QMessageBox::information(this, "알림", "제거할 파일을 선택하세요.");
         return;
     }
 
-    QMessageBox::StandardButton reply = QMessageBox::question(
-        this, "파일 제거",
-        QString("'%1'\n(%2)\n목록에서 제거하시겠습니까?")
-            .arg(selected->text())       // 파일명
-            .arg(selected->toolTip()),    // 전체 경로
-        QMessageBox::Yes | QMessageBox::No);
+    QString confirmMsg = targets.size() == 1
+                             ? QString("'%1'\n(%2)\n목록에서 제거하시겠습니까?")
+                                   .arg(targets.first()->text())
+                                   .arg(targets.first()->toolTip())
+                             : QString("%1개 파일을 목록에서 제거하시겠습니까?").arg(targets.size());
 
-    if (reply != QMessageBox::Yes) return;
+    if (QMessageBox::question(this, "파일 제거", confirmMsg,
+                              QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) return;
 
-    delete m_fileListWidget->takeItem(m_fileListWidget->row(selected));
+    for (auto *item : targets) {
+        m_fileColors.remove(item->toolTip());
+        delete m_fileListWidget->takeItem(m_fileListWidget->row(item));
+    }
+
     m_logTableWidget->setRowCount(0);
-    m_allEntries.clear();   // ★
+    m_allEntries.clear();
     m_parseBtn->setVisible(false);
     m_currentFile.clear();
     statusBar()->showMessage("파일이 제거되었습니다.");
@@ -421,7 +582,11 @@ void MainWindow::onParseFile()
 // ── 실제 파싱 + 테이블 표시 ──────────────────────────────
 void MainWindow::parseAndDisplay(const QString &filePath)
 {
-    m_allEntries = m_parser.parse(filePath);  // ★ 전체 보관
+    m_allEntries = m_parser.parse(filePath);
+
+    // ★ 출처 파일 경로 기록
+    for (LogEntry &e : m_allEntries)
+        e.sourceFile = filePath;
 
     // 파싱 결과에서 시간 범위 자동 감지 → DateTimeEdit 초기값 설정
     // (노이즈 제외하고 유효한 날짜만)
@@ -466,7 +631,56 @@ void MainWindow::parseAndDisplay(const QString &filePath)
     setWindowTitle("TellMeLog — " + fi.fileName());
 }
 
-// ── 필터 + 정렬 적용 ★ ──────────────────────────────────
+// ── 다중 파일 병합 파싱 ★ ────────────────────────────────
+void MainWindow::mergeAndDisplay(const QStringList &filePaths)
+{
+    m_allEntries.clear();
+    int totalNoise = 0;
+
+    for (const QString &path : filePaths) {
+        QVector<LogEntry> entries = m_parser.parse(path);
+        totalNoise += m_parser.noiseCount();
+
+        // 각 엔트리에 출처 파일 경로 기록
+        for (LogEntry &e : entries)
+            e.sourceFile = path;
+
+        m_allEntries.append(entries);
+    }
+
+    // 시간 범위 자동 감지 (병합된 전체 기준)
+    QDateTime minDt, maxDt;
+    for (const LogEntry &e : m_allEntries) {
+        if (!e.parsed) continue;
+        QString dtStr = e.date + " " + e.timestamp;
+        QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
+        if (!dt.isValid())
+            dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
+        if (!dt.isValid()) continue;
+        if (!minDt.isValid() || dt < minDt) minDt = dt;
+        if (!maxDt.isValid() || dt > maxDt) maxDt = dt;
+    }
+
+    if (minDt.isValid() && maxDt.isValid()) {
+        m_dateFrom->blockSignals(true); m_dateTo->blockSignals(true);
+        m_timeFrom->blockSignals(true); m_timeTo->blockSignals(true);
+        m_dateFrom->setDate(minDt.date()); m_dateTo->setDate(maxDt.date());
+        m_timeFrom->setTime(minDt.time()); m_timeTo->setTime(maxDt.time());
+        m_dateFrom->blockSignals(false); m_dateTo->blockSignals(false);
+        m_timeFrom->blockSignals(false); m_timeTo->blockSignals(false);
+    }
+
+    applyFilters();
+
+    statusBar()->showMessage(
+        QString("병합: %1개 파일 — 총 %2줄 (노이즈: %3줄)")
+            .arg(filePaths.size())
+            .arg(m_allEntries.size())
+            .arg(totalNoise));
+    setWindowTitle(QString("TellMeLog — %1개 파일 병합").arg(filePaths.size()));
+}
+
+
 void MainWindow::applyFilters()
 {
     if (m_allEntries.isEmpty()) return;
@@ -580,6 +794,14 @@ void MainWindow::applyFilters()
 // ── 테이블 채우기 ────────────────────────────────────────
 void MainWindow::populateTable(const QVector<LogEntry> &entries)
 {
+    // 체크된 파일이 2개 이상이면 병합 모드 → 파일 색상 적용
+    int checkedCount = 0;
+    for (int i = 0; i < m_fileListWidget->count(); ++i) {
+        if (m_fileListWidget->item(i)->checkState() == Qt::Checked)
+            ++checkedCount;
+    }
+    bool mergeMode = (checkedCount > 1);
+
     m_logTableWidget->setRowCount(0);
 
     for (const LogEntry &entry : entries) {
@@ -592,6 +814,7 @@ void MainWindow::populateTable(const QVector<LogEntry> &entries)
         m_logTableWidget->setItem(row, 3, new QTableWidgetItem(entry.module));
         m_logTableWidget->setItem(row, 4, new QTableWidgetItem(entry.message));
 
+        // ★ 색상 우선순위: ERROR > WARN > 노이즈 > 파일 색상(병합 시)
         QColor rowColor;
         if (!entry.parsed) {
             rowColor = QColor("#f0f0f0");
@@ -599,11 +822,15 @@ void MainWindow::populateTable(const QVector<LogEntry> &entries)
             rowColor = QColor("#ffe0e0");
         } else if (entry.level == "WARN") {
             rowColor = QColor("#fff4cc");
+        } else if (mergeMode && !entry.sourceFile.isEmpty()) {
+            rowColor = m_fileColors.value(entry.sourceFile, QColor("#FFFFFF"));
         }
 
         if (rowColor.isValid()) {
-            for (int col = 0; col < 5; ++col)
-                m_logTableWidget->item(row, col)->setBackground(rowColor);
+            for (int col = 0; col < 5; ++col) {
+                if (auto *cell = m_logTableWidget->item(row, col))
+                    cell->setBackground(rowColor);
+            }
         }
     }
 }

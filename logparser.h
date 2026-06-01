@@ -13,7 +13,8 @@ struct LogEntry {
     QString level;
     QString module;
     QString message;
-    bool    parsed;    // false = 노이즈 라인
+    bool    parsed;      // false = 노이즈 라인
+    QString sourceFile;  // 출처 파일 경로 (병합 시 색상 구분용)
 };
 
 class LogParser

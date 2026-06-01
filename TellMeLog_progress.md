@@ -61,6 +61,26 @@
   - 상태바에 검색어 및 범위 표시
   - 전체 초기화 버튼으로 검색어·범위도 함께 리셋
 
+  - [x] 리포트 생성
+  - QPrintPreviewDialog 기반 미리보기 (모달)
+  - QTextDocument + QPrinter → PDF 저장
+  - 요약 (레벨별 카운트, 로그 시간 범위)
+  - 모듈별 오류 통계 (ERROR/WARN 건수, 많은 순 정렬)
+  - ERROR / WARN 상세 목록 테이블
+  - HTML 이스케이프 처리 (꺾쇠 등)
+  - A4 세로 기준 레이아웃
+
+- [x] 다중 파일 병합 뷰
+  - 파일 목록에 체크박스 추가 (커스텀 델리게이트, PE_IndicatorCheckBox)
+  - 체크박스 클릭: 체크된 파일들 자동 병합 표시 (타임스탬프 기준 정렬)
+  - 텍스트/행 클릭: 해당 파일 단독 표시 + 나머지 체크 해제
+  - 파일별 고유 파스텔 색상 배정 (팔레트 6색 순환)
+  - 체크 시에만 파일 색상 표시, 기본은 흰 배경
+  - 선택/호버 시 해당 색 기준으로 미세하게 진하게
+  - 병합 모드에서 테이블 행 배경색으로 출처 파일 구분
+  - 좌측 패널 초기 너비 240px로 고정
+  - 상태바에 "병합: N개 파일 — 총 N줄" 표시
+
 ## 현재 코드 구조 (파일 업로드 없이 파악용)
 
 ### LogEntry 구조체 (logparser.h)
@@ -72,6 +92,7 @@ struct LogEntry {
     QString module;     // 모듈명
     QString message;    // 메시지
     bool    parsed;     // false = 노이즈 라인
+    QString sourceFile;  // 출처 파일 경로 (병합 시 색상 구분용)
 };
 ```
 
@@ -97,6 +118,9 @@ struct LogEntry {
 - `m_searchEdit` : QLineEdit, 실시간 검색창
 - `m_searchScopeCombo` : QComboBox, 검색 범위 (all/module/message)
 - `applyFilters()` → 레벨/날짜/시간/정렬/검색 조건 적용 후 populateTable() 호출
+- `m_fileColors` : QMap<QString, QColor>, 파일 경로 → 고유 배경색
+- `mergeAndDisplay(filePaths)` → 다중 파일 파싱 후 병합, populateTable() 호출
+- `eventFilter()` → 파일 목록 체크박스/텍스트 클릭 영역 분리 처리
 
 ### 툴바 버튼 연결
 - 파일 추가 → onAddFile()
@@ -106,5 +130,4 @@ struct LogEntry {
 
 ## 다음 단계
 
-- [ ] 리포트 생성
 - [ ] 실시간 로그 감시 (QFileSystemWatcher)

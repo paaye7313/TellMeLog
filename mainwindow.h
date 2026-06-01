@@ -13,6 +13,7 @@
 #include <QDateEdit>
 #include <QTimeEdit>
 #include <QLineEdit>   // ★ 추가
+#include <QMap>        // 병합 색상 맵
 #include "logparser.h"
 #include "reportgenerator.h"
 
@@ -38,9 +39,11 @@ private slots:
 private:
     void setupUI();
     void setupToolBar();
-    void setupFilterBar();  // ★ 추가
+    void setupFilterBar();
     void parseAndDisplay(const QString &filePath);
+    void mergeAndDisplay(const QStringList &filePaths);
     void populateTable(const QVector<LogEntry> &entries);
+    bool eventFilter(QObject *obj, QEvent *event) override;  // ★ 체크박스 클릭 처리용
 
     // ── 기존 위젯 ──
     QListWidget  *m_fileListWidget;
@@ -70,6 +73,9 @@ private:
     LogParser          m_parser;
     QString            m_currentFile;
     QVector<LogEntry>  m_allEntries;  // ★ 전체 파싱 결과 보관
+
+    // ── 병합 색상 ──
+    QMap<QString, QColor> m_fileColors;  // 파일 경로 → 배경색
 
     // ── 리포트 ──
     ReportGenerator m_reportGen;
