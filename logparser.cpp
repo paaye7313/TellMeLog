@@ -38,6 +38,45 @@ QVector<LogEntry> LogParser::parse(const QString &filePath)
     return entries;
 }
 
+// ★ 실시간 감시용: startOffset 이후 새 줄만 파싱 ──────────────
+// tail -f 방식: 마지막으로 읽은 파일 위치(startOffset)부터 끝까지만 읽음
+// CSV는 감시 대상에서 제외 (헤더 재해석이 필요하므로 .log/.txt만 지원)
+QVector<LogEntry> LogParser::parseTail(const QString &filePath,
+                                       qint64 startOffset,
+                                       qint64 &outEndOffset)
+{
+    QVector<LogEntry> newEntries;
+    outEndOffset = startOffset; // 실패 시 원래 위치 유지
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return newEntries;
+
+    // startOffset으로 이동
+    if (startOffset > 0 && !file.seek(startOffset)) {
+        file.close();
+        return newEntries;
+    }
+
+    QTextStream in(&file);
+    in.setEncoding(QStringConverter::Utf8);
+
+    while (!in.atEnd()) {
+        QString line = in.readLine().trimmed();
+        if (line.isEmpty())
+            continue;
+        LogEntry entry = parseLine(line);
+        newEntries.append(entry);
+    }
+
+    // 파싱 후 실제 파일 끝 위치 기록
+    // QTextStream은 내부 버퍼가 있어 file.pos()가 실제 끝과 다를 수 있음
+    // → atEnd() 확인 후 file.size()로 안전하게 기록
+    outEndOffset = file.size();
+    file.close();
+    return newEntries;
+}
+
 // ★ CSV 파싱 ─────────────────────────────────────────────
 QVector<LogEntry> LogParser::parseCsv(QFile &file)
 {

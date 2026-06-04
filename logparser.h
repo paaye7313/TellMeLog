@@ -25,6 +25,13 @@ public:
     // 파일 경로를 받아 파싱 후 결과 반환
     QVector<LogEntry> parse(const QString &filePath);
 
+    // ★ 실시간 감시용: startOffset 위치부터 끝까지만 파싱
+    //   반환값: 새로 파싱된 엔트리들
+    //   outEndOffset: 파싱 후 파일 끝 위치 (다음 호출 시 startOffset으로 사용)
+    QVector<LogEntry> parseTail(const QString &filePath,
+                                qint64 startOffset,
+                                qint64 &outEndOffset);
+
     // 마지막 파싱에서 실패한 줄 수
     int noiseCount() const { return m_noiseCount; }
 

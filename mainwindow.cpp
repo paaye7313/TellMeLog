@@ -17,38 +17,45 @@
 #include <QTextStream>
 #include <QDir>
 #include <QFrame>
-#include <QLineEdit>        // ★ 추가
-#include <QPainter>         // 색상 뱃지
+#include <QLineEdit>
+#include <QPainter>
 #include <QStyledItemDelegate>
 #include <QApplication>
 #include <QMouseEvent>
 #include <QEvent>
+#include <QFileSystemWatcher>  // ★ 추가
+#include <QTimer>              // ★ 추가
 
 // ── 파일 목록 커스텀 델리게이트 ─────────────────────────────
 // 역할:
 //   1) 아이템 배경을 파일 고유 색으로 채움 (선택/호버도 해당 색 기준)
 //   2) 왼쪽에 체크박스를 직접 그림 (Qt 체크박스 스타일 사용)
 //   3) 체크박스 영역 / 텍스트 영역을 분리해서 클릭 구분에 사용
+//   4) ★ 감시 중인 파일은 텍스트 앞에 🟢 표시
 class FileListDelegate : public QStyledItemDelegate
 {
 public:
-    static constexpr int CHECKBOX_WIDTH = 26; // 체크박스 영역 너비 (px), 여백 포함
+    static constexpr int CHECKBOX_WIDTH = 26;
 
-    explicit FileListDelegate(const QMap<QString, QColor> *colorMap, QObject *parent = nullptr)
-        : QStyledItemDelegate(parent), m_colorMap(colorMap) {}
+    explicit FileListDelegate(const QMap<QString, QColor> *colorMap,
+                              const QSet<QString>         *watchedFiles,
+                              QObject *parent = nullptr)
+        : QStyledItemDelegate(parent)
+        , m_colorMap(colorMap)
+        , m_watchedFiles(watchedFiles)
+    {}
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index) const override
     {
         QString filePath = index.data(Qt::ToolTipRole).toString();
         bool checked = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
+        bool watching = m_watchedFiles->contains(filePath); // ★
 
-        // 체크됐을 때만 파일 고유 색상, 기본은 흰색
         QColor baseColor = checked
                                ? m_colorMap->value(filePath, QColor("#FFFFFF"))
                                : QColor("#FFFFFF");
 
-        // 호버: 연한 회색 / 선택(하이라이트): baseColor 기준으로 진하게
         QColor bgColor;
         if (option.state & QStyle::State_Selected)
             bgColor = checked ? baseColor.darker(115) : QColor("#EEEEEE");
@@ -62,25 +69,27 @@ public:
         // 1) 배경
         painter->fillRect(option.rect, bgColor);
 
-        // 2) 체크박스 그리기 (시스템 스타일 사용)
+        // 2) 체크박스
         QStyleOptionButton cbOpt;
         cbOpt.rect = checkBoxRect(option.rect);
         cbOpt.state = QStyle::State_Enabled;
         cbOpt.state |= checked ? QStyle::State_On : QStyle::State_Off;
         QApplication::style()->drawPrimitive(QStyle::PE_IndicatorCheckBox, &cbOpt, painter);
 
-        // 3) 텍스트 (체크박스와 4px 여백)
+        // 3) 텍스트 (감시 중이면 🟢 prefix 붙임)
         QRect textRect = option.rect.adjusted(CHECKBOX_WIDTH + 6, 0, -4, 0);
-        QString text = index.data(Qt::DisplayRole).toString();
+        QString displayText = index.data(Qt::DisplayRole).toString();
+        if (watching)
+            displayText = "🟢 " + displayText;  // ★ 감시 중 표시
+
         painter->setPen(QColor("#000000"));
         painter->setFont(option.font);
         painter->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
-                          option.fontMetrics.elidedText(text, Qt::ElideRight, textRect.width()));
+                          option.fontMetrics.elidedText(displayText, Qt::ElideRight, textRect.width()));
 
         painter->restore();
     }
 
-    // 체크박스 영역 반환 (MainWindow에서 클릭 구분에도 사용)
     static QRect checkBoxRect(const QRect &itemRect)
     {
         int cbSize = 16;
@@ -91,6 +100,7 @@ public:
 
 private:
     const QMap<QString, QColor> *m_colorMap;
+    const QSet<QString>         *m_watchedFiles; // ★
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -100,6 +110,65 @@ MainWindow::MainWindow(QWidget *parent)
 {
     setWindowTitle("TellMeLog - 로그야 뭐라고");
     resize(1200, 700);
+
+    // ★ QFileSystemWatcher 초기화
+    m_watcher = new QFileSystemWatcher(this);
+    connect(m_watcher, &QFileSystemWatcher::fileChanged,
+            this,      &MainWindow::onFileChanged);
+
+    // ★ 하이라이트 페이드 타이머 초기화
+    m_highlightTimer = new QTimer(this);
+    m_highlightTimer->setInterval(FADE_INTERVAL);
+    connect(m_highlightTimer, &QTimer::timeout, this, [this]() {
+        if (m_pendingHighlightRanges.isEmpty()) {
+            m_highlightTimer->stop();
+            return;
+        }
+
+        ++m_highlightStep;
+        // 페이드: 노란색 #fffacd → 흰색 (FADE_STEPS 단계)
+        // step=0: 노랑 진하게, step=FADE_STEPS: 원래 행 색으로
+        float ratio = static_cast<float>(m_highlightStep) / FADE_STEPS;
+        ratio = qMin(ratio, 1.0f);
+
+        for (const auto &range : m_pendingHighlightRanges) {
+            for (int row = range.first; row <= range.second; ++row) {
+                if (row >= m_logTableWidget->rowCount()) continue;
+
+                // 이 행의 기본 색 결정 (ERROR/WARN/노이즈/파일색/흰색)
+                // populateTable과 동일한 규칙
+                QColor targetColor;
+                QTableWidgetItem *lvItem = m_logTableWidget->item(row, 2);
+                QString level = lvItem ? lvItem->text() : QString();
+
+                // 노이즈는 배경으로 판단하기 어려우므로 흰색 기준
+                if (level == "ERROR")
+                    targetColor = QColor("#ffe0e0");
+                else if (level == "WARN")
+                    targetColor = QColor("#fff4cc");
+                else
+                    targetColor = QColor("#FFFFFF");
+
+                // 노란색(255,255,180) → targetColor 선형 보간
+                int r = static_cast<int>(255 + (targetColor.red()   - 255) * ratio);
+                int g = static_cast<int>(255 + (targetColor.green() - 255) * ratio);
+                int b = static_cast<int>(180 + (targetColor.blue()  - 180) * ratio);
+                QColor fadeColor(r, g, b);
+
+                for (int col = 0; col < 5; ++col) {
+                    if (auto *cell = m_logTableWidget->item(row, col))
+                        cell->setBackground(fadeColor);
+                }
+            }
+        }
+
+        if (m_highlightStep >= FADE_STEPS) {
+            m_highlightTimer->stop();
+            m_pendingHighlightRanges.clear();
+            m_highlightStep = 0;
+        }
+    });
+
     setupUI();
     setupToolBar();
     statusBar()->showMessage("파일을 추가하세요.");
@@ -120,10 +189,10 @@ void MainWindow::setupUI()
 
     m_fileListWidget = new QListWidget(leftPanel);
     m_fileListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_fileListWidget->setMouseTracking(true);  // 호버 감지에 필요
-    // ★ 커스텀 델리게이트 적용 (파일 색 배경 + 체크박스)
-    m_fileListWidget->setItemDelegate(new FileListDelegate(&m_fileColors, m_fileListWidget));
-    // ★ viewport에 이벤트 필터 설치 — 마우스 클릭 위치로 체크박스/텍스트 영역 직접 구분
+    m_fileListWidget->setMouseTracking(true);
+    // ★ 커스텀 델리게이트: m_watchedFiles 포인터 전달
+    m_fileListWidget->setItemDelegate(
+        new FileListDelegate(&m_fileColors, &m_watchedFiles, m_fileListWidget));
     m_fileListWidget->viewport()->installEventFilter(this);
 
     leftLayout->addWidget(fileListLabel);
@@ -138,8 +207,7 @@ void MainWindow::setupUI()
     QLabel *tableLabel = new QLabel("📋 파싱 결과", rightPanel);
     tableLabel->setStyleSheet("font-weight: bold; padding: 4px;");
 
-    // ── 필터 바 ★ ──
-    // ── 필터 바 (2줄) ★ ──
+    // ── 필터 바 (2줄) ──
     QWidget *filterBarWrap = new QWidget(rightPanel);
     QVBoxLayout *filterWrapLayout = new QVBoxLayout(filterBarWrap);
     filterWrapLayout->setContentsMargins(0, 0, 0, 0);
@@ -187,7 +255,7 @@ void MainWindow::setupUI()
     sortLabel->setStyleSheet(labelStyle);
 
     m_sortCombo = new QComboBox(row1);
-    m_sortCombo->addItem("원본 순서", "original");  // ★ 기본값 (맨 위)
+    m_sortCombo->addItem("원본 순서", "original");
     m_sortCombo->addItem("시간 오름차순 ↑", "asc");
     m_sortCombo->addItem("시간 내림차순 ↓", "desc");
     m_sortCombo->setStyleSheet("QComboBox { min-width: 130px; }");
@@ -200,9 +268,9 @@ void MainWindow::setupUI()
     row1Layout->addWidget(makeSep(row1));
     row1Layout->addWidget(sortLabel);
     row1Layout->addWidget(m_sortCombo);
-    row1Layout->addWidget(makeSep(row1));   // ★ 검색 구분선
+    row1Layout->addWidget(makeSep(row1));
 
-    // ★ 검색창
+    // 검색창
     QLabel *searchLabel = new QLabel("🔍", row1);
     m_searchEdit = new QLineEdit(row1);
     m_searchEdit->setPlaceholderText("검색어 입력...");
@@ -228,7 +296,6 @@ void MainWindow::setupUI()
     row2Layout->setContentsMargins(8, 4, 8, 4);
     row2Layout->setSpacing(8);
 
-    // 날짜 범위
     QLabel *dateLabel = new QLabel("날짜:", row2);
     dateLabel->setStyleSheet(labelStyle);
 
@@ -246,7 +313,6 @@ void MainWindow::setupUI()
     QLabel *dateTild = new QLabel("~", row2);
     dateTild->setAlignment(Qt::AlignCenter);
 
-    // 시간 범위
     QLabel *timeLabel = new QLabel("시간:", row2);
     timeLabel->setStyleSheet(labelStyle);
 
@@ -262,7 +328,6 @@ void MainWindow::setupUI()
     QLabel *timeTild = new QLabel("~", row2);
     timeTild->setAlignment(Qt::AlignCenter);
 
-    // 초기화 버튼
     m_btnResetTime = new QPushButton("↺ 전체 초기화", row2);
     m_btnResetTime->setToolTip("레벨·검색·날짜·시간 전체 초기화");
     m_btnResetTime->setStyleSheet(
@@ -295,11 +360,9 @@ void MainWindow::setupUI()
     connect(m_timeFrom, &QTimeEdit::timeChanged,       this, &MainWindow::applyFilters);
     connect(m_timeTo,   &QTimeEdit::timeChanged,       this, &MainWindow::applyFilters);
     connect(m_sortCombo, &QComboBox::currentIndexChanged, this, &MainWindow::applyFilters);
-    // ★ 검색 시그널
     connect(m_searchEdit,       &QLineEdit::textChanged,           this, &MainWindow::applyFilters);
     connect(m_searchScopeCombo, &QComboBox::currentIndexChanged,   this, &MainWindow::applyFilters);
     connect(m_btnResetTime, &QPushButton::clicked, this, [this]() {
-        // 레벨 체크박스
         m_chkError->blockSignals(true);
         m_chkWarn->blockSignals(true);
         m_chkInfo->blockSignals(true);
@@ -313,20 +376,17 @@ void MainWindow::setupUI()
         m_chkInfo->blockSignals(false);
         m_chkNoise->blockSignals(false);
 
-        // 정렬
         m_sortCombo->blockSignals(true);
-        m_sortCombo->setCurrentIndex(0);  // 원본 순서
+        m_sortCombo->setCurrentIndex(0);
         m_sortCombo->blockSignals(false);
 
-        // 검색
         m_searchEdit->blockSignals(true);
         m_searchEdit->clear();
         m_searchEdit->blockSignals(false);
         m_searchScopeCombo->blockSignals(true);
-        m_searchScopeCombo->setCurrentIndex(0);  // 전체
+        m_searchScopeCombo->setCurrentIndex(0);
         m_searchScopeCombo->blockSignals(false);
 
-        // 날짜/시간
         m_dateFrom->blockSignals(true);
         m_dateTo->blockSignals(true);
         m_timeFrom->blockSignals(true);
@@ -356,7 +416,7 @@ void MainWindow::setupUI()
         );
 
     rightLayout->addWidget(tableLabel);
-    rightLayout->addWidget(filterBarWrap);      // ★ 필터 바
+    rightLayout->addWidget(filterBarWrap);
     rightLayout->addWidget(m_logTableWidget);
 
     // ── 스플리터 ──
@@ -366,19 +426,14 @@ void MainWindow::setupUI()
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 3);
     splitter->setHandleWidth(4);
-    splitter->setSizes({240, 960});  // ★ 좌측 패널 초기 너비 240px
+    splitter->setSizes({240, 960});
 
     setCentralWidget(splitter);
 }
 
-// ── setupFilterBar 별도 함수로 빼지 않음 (setupUI 내에 통합) ──
-void MainWindow::setupFilterBar() {} // 빈 구현 (헤더 선언 유지용)
+void MainWindow::setupFilterBar() {}
 
-// ── 파일 목록 클릭 처리 (체크박스 / 텍스트 영역 구분) ────────
-// itemPressed 대신 eventFilter를 사용하는 이유:
-//   - itemPressed는 발생 시점에 QCursor::pos()가 부정확할 수 있음
-//   - setCheckState()가 내부적으로 itemChanged를 발생시켜 이중 처리 발생 가능
-//   - eventFilter는 MouseButtonPress 시점의 정확한 pos()를 직접 사용
+// ── 파일 목록 클릭 처리 ────────────────────────────────
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 {
     if (obj == m_fileListWidget->viewport()
@@ -393,7 +448,6 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
             QRect cbRect   = FileListDelegate::checkBoxRect(itemRect);
 
             if (cbRect.contains(me->pos())) {
-                // ── 체크박스 영역 클릭: 토글 후 체크된 파일 목록 갱신 ──
                 item->setCheckState(
                     item->checkState() == Qt::Checked ? Qt::Unchecked : Qt::Checked);
 
@@ -414,10 +468,9 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
                 } else {
                     mergeAndDisplay(checkedPaths);
                 }
-                return true;  // 이벤트 소비 (QListWidget 기본 선택 동작 방지)
+                return true;
 
             } else {
-                // ── 텍스트/행 영역 클릭: 이 파일만 단독 표시 ──
                 for (int i = 0; i < m_fileListWidget->count(); ++i)
                     m_fileListWidget->item(i)->setCheckState(Qt::Unchecked);
                 item->setCheckState(Qt::Checked);
@@ -429,6 +482,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
     return QMainWindow::eventFilter(obj, event);
 }
 
+// ── 툴바 구성 ★ 감시 버튼 추가 ────────────────────────────
 void MainWindow::setupToolBar()
 {
     QToolBar *toolBar = addToolBar("메인 툴바");
@@ -439,17 +493,29 @@ void MainWindow::setupToolBar()
     m_parseBtn      = new QPushButton("▶ 파싱 시작", this);
     m_csvBtn        = new QPushButton("📥 CSV 내보내기", this);
     m_reportBtn     = new QPushButton("📊 리포트 생성", this);
+    m_watchBtn      = new QPushButton("👁 감시 시작", this); // ★
 
     const QString btnStyle =
         "QPushButton { padding: 5px 12px; margin: 2px; border-radius: 4px; }"
         "QPushButton:hover { background-color: #d0e8ff; }"
         "QPushButton:disabled { color: #aaaaaa; }";
 
+    // ★ 감시 버튼은 활성화 시 초록 배경으로 구분
+    const QString watchBtnActiveStyle =
+        "QPushButton { padding: 5px 12px; margin: 2px; border-radius: 4px;"
+        "              background-color: #d4efdf; border: 1px solid #27ae60; color: #1a7a40; font-weight: bold; }"
+        "QPushButton:hover { background-color: #abebc6; }";
+
     m_addFileBtn->setStyleSheet(btnStyle);
     m_removeFileBtn->setStyleSheet(btnStyle);
     m_parseBtn->setStyleSheet(btnStyle);
     m_csvBtn->setStyleSheet(btnStyle);
     m_reportBtn->setStyleSheet(btnStyle);
+    m_watchBtn->setStyleSheet(btnStyle);  // 초기: 비활성 스타일
+
+    // ★ 감시 버튼 스타일 프로퍼티 저장 (토글에 사용)
+    m_watchBtn->setProperty("activeStyle",   watchBtnActiveStyle);
+    m_watchBtn->setProperty("inactiveStyle", btnStyle);
 
     m_parseBtn->setVisible(false);
 
@@ -459,6 +525,7 @@ void MainWindow::setupToolBar()
     toolBar->addWidget(m_addFileBtn);
     toolBar->addWidget(m_removeFileBtn);
     toolBar->addWidget(m_parseBtn);
+    toolBar->addWidget(m_watchBtn);   // ★ 파싱 버튼 바로 뒤에 배치
     toolBar->addWidget(spacer);
     toolBar->addWidget(m_csvBtn);
     toolBar->addWidget(m_reportBtn);
@@ -468,19 +535,19 @@ void MainWindow::setupToolBar()
     connect(m_parseBtn,      &QPushButton::clicked, this, &MainWindow::onParseFile);
     connect(m_csvBtn,        &QPushButton::clicked, this, &MainWindow::onExportCsv);
     connect(m_reportBtn,     &QPushButton::clicked, this, &MainWindow::onGenerateReport);
+    connect(m_watchBtn,      &QPushButton::clicked, this, &MainWindow::onToggleWatch); // ★
 }
 
-// ── 파일 추가 ────────────────────────────────────────────
+// ── 파일 추가 ─────────────────────────────────────────────
 void MainWindow::onAddFile()
 {
-    // 파일별 배경색 팔레트 (ERROR/WARN 색과 겹치지 않는 파스텔 계열)
     static const QList<QColor> FILE_PALETTE = {
-        QColor("#FFFFFF"),   // 파일 1: 흰색 (기본)
-        QColor("#EBF5FB"),   // 파일 2: 하늘
-        QColor("#E8F8F5"),   // 파일 3: 민트
-        QColor("#F5EEF8"),   // 파일 4: 라벤더
-        QColor("#FEF9E7"),   // 파일 5: 연노랑
-        QColor("#FDFEFE"),   // 파일 6: 연회색
+        QColor("#FFFFFF"),
+        QColor("#EBF5FB"),
+        QColor("#E8F8F5"),
+        QColor("#F5EEF8"),
+        QColor("#FEF9E7"),
+        QColor("#FDFEFE"),
     };
 
     QStringList files = QFileDialog::getOpenFileNames(
@@ -488,7 +555,6 @@ void MainWindow::onAddFile()
         "로그/CSV 파일 (*.log *.txt *.csv);;모든 파일 (*)");
 
     for (const QString &path : files) {
-        // 전체 경로로 중복 체크
         bool alreadyExists = false;
         for (int i = 0; i < m_fileListWidget->count(); ++i) {
             if (m_fileListWidget->item(i)->toolTip() == path) {
@@ -498,23 +564,20 @@ void MainWindow::onAddFile()
         }
         if (alreadyExists) continue;
 
-        // 색상 배정 (현재 파일 수 기준 순환)
         int colorIdx = m_fileColors.size() % FILE_PALETTE.size();
         QColor assignedColor = FILE_PALETTE[colorIdx];
         m_fileColors[path] = assignedColor;
 
-        // ★ 체크박스 방식 — 아이콘 뱃지 없이 아이템 생성
         QListWidgetItem *item = new QListWidgetItem(QFileInfo(path).fileName());
         item->setToolTip(path);
-        item->setCheckState(Qt::Unchecked);  // 체크박스 초기값: 해제
+        item->setCheckState(Qt::Unchecked);
         m_fileListWidget->addItem(item);
     }
 }
 
-// ── 파일 제거 ────────────────────────────────────────────
+// ── 파일 제거 ─────────────────────────────────────────────
 void MainWindow::onRemoveFile()
 {
-    // 체크된 항목이 있으면 체크된 것들을 제거, 없으면 선택(하이라이트)된 항목 제거
     QList<QListWidgetItem*> targets;
     for (int i = 0; i < m_fileListWidget->count(); ++i) {
         if (m_fileListWidget->item(i)->checkState() == Qt::Checked)
@@ -539,7 +602,9 @@ void MainWindow::onRemoveFile()
                               QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) return;
 
     for (auto *item : targets) {
-        m_fileColors.remove(item->toolTip());
+        QString path = item->toolTip();
+        stopWatching(path);          // ★ 감시 중이면 먼저 해제
+        m_fileColors.remove(path);
         delete m_fileListWidget->takeItem(m_fileListWidget->row(item));
     }
 
@@ -548,9 +613,10 @@ void MainWindow::onRemoveFile()
     m_parseBtn->setVisible(false);
     m_currentFile.clear();
     statusBar()->showMessage("파일이 제거되었습니다.");
+    updateWatchUI();  // ★ 상태바 갱신
 }
 
-// ── 파일 선택 시 ─────────────────────────────────────────
+// ── 파일 선택 시 ───────────────────────────────────────────
 void MainWindow::onFileSelected(QListWidgetItem *item)
 {
     m_currentFile = item->toolTip();
@@ -570,7 +636,7 @@ void MainWindow::onFileSelected(QListWidgetItem *item)
     }
 }
 
-// ── 수동 파싱 버튼 ───────────────────────────────────────
+// ── 수동 파싱 버튼 ─────────────────────────────────────────
 void MainWindow::onParseFile()
 {
     if (m_currentFile.isEmpty()) return;
@@ -579,21 +645,22 @@ void MainWindow::onParseFile()
     m_parseBtn->setVisible(false);
 }
 
-// ── 실제 파싱 + 테이블 표시 ──────────────────────────────
+// ── 실제 파싱 + 테이블 표시 ────────────────────────────────
 void MainWindow::parseAndDisplay(const QString &filePath)
 {
     m_allEntries = m_parser.parse(filePath);
 
-    // ★ 출처 파일 경로 기록
     for (LogEntry &e : m_allEntries)
         e.sourceFile = filePath;
 
-    // 파싱 결과에서 시간 범위 자동 감지 → DateTimeEdit 초기값 설정
-    // (노이즈 제외하고 유효한 날짜만)
+    // ★ 감시 중인 파일이면 tail offset 갱신 (전체 파일 크기로 초기화)
+    if (m_watchedFiles.contains(filePath)) {
+        m_fileTailPos[filePath] = QFileInfo(filePath).size();
+    }
+
     QDateTime minDt, maxDt;
     for (const LogEntry &e : m_allEntries) {
         if (!e.parsed) continue;
-        // "yyyy-MM-dd" + "HH:mm:ss.zzz" 조합
         QString dtStr = e.date + " " + e.timestamp;
         QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
         if (!dt.isValid())
@@ -604,7 +671,6 @@ void MainWindow::parseAndDisplay(const QString &filePath)
         if (!maxDt.isValid() || dt > maxDt) maxDt = dt;
     }
 
-    // 유효한 범위가 감지되면 DateTimeEdit에 반영 (시그널 블록)
     if (minDt.isValid() && maxDt.isValid()) {
         m_dateFrom->blockSignals(true);
         m_dateTo->blockSignals(true);
@@ -620,7 +686,7 @@ void MainWindow::parseAndDisplay(const QString &filePath)
         m_timeTo->blockSignals(false);
     }
 
-    applyFilters();  // ★ 필터 적용해서 테이블 갱신
+    applyFilters();
 
     QFileInfo fi(filePath);
     statusBar()->showMessage(
@@ -631,7 +697,7 @@ void MainWindow::parseAndDisplay(const QString &filePath)
     setWindowTitle("TellMeLog — " + fi.fileName());
 }
 
-// ── 다중 파일 병합 파싱 ★ ────────────────────────────────
+// ── 다중 파일 병합 파싱 ────────────────────────────────────
 void MainWindow::mergeAndDisplay(const QStringList &filePaths)
 {
     m_allEntries.clear();
@@ -641,14 +707,12 @@ void MainWindow::mergeAndDisplay(const QStringList &filePaths)
         QVector<LogEntry> entries = m_parser.parse(path);
         totalNoise += m_parser.noiseCount();
 
-        // 각 엔트리에 출처 파일 경로 기록
         for (LogEntry &e : entries)
             e.sourceFile = path;
 
         m_allEntries.append(entries);
     }
 
-    // 시간 범위 자동 감지 (병합된 전체 기준)
     QDateTime minDt, maxDt;
     for (const LogEntry &e : m_allEntries) {
         if (!e.parsed) continue;
@@ -680,7 +744,7 @@ void MainWindow::mergeAndDisplay(const QStringList &filePaths)
     setWindowTitle(QString("TellMeLog — %1개 파일 병합").arg(filePaths.size()));
 }
 
-
+// ── 필터/정렬 적용 ─────────────────────────────────────────
 void MainWindow::applyFilters()
 {
     if (m_allEntries.isEmpty()) return;
@@ -691,19 +755,16 @@ void MainWindow::applyFilters()
     bool showNoise = m_chkNoise->isChecked();
     QString sortMode = m_sortCombo->currentData().toString();
 
-    // ★ 검색어
     QString keyword     = m_searchEdit->text().trimmed();
     QString searchScope = m_searchScopeCombo->currentData().toString();
 
     QDateTime dtFrom(m_dateFrom->date(), m_timeFrom->time());
     QDateTime dtTo  (m_dateTo->date(),   m_timeTo->time());
 
-    // 필터링
     QVector<LogEntry> filtered;
     filtered.reserve(m_allEntries.size());
 
     for (const LogEntry &e : m_allEntries) {
-        // 레벨 필터
         if (!e.parsed) {
             if (!showNoise) continue;
         } else if (e.level == "ERROR") {
@@ -711,11 +772,9 @@ void MainWindow::applyFilters()
         } else if (e.level == "WARN") {
             if (!showWarn) continue;
         } else {
-            // INFO, DEBUG 등 나머지
             if (!showInfo) continue;
         }
 
-        // 시간 범위 필터 (파싱된 줄만 적용, 노이즈는 통과)
         if (e.parsed) {
             QString dtStr = e.date + " " + e.timestamp;
             QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
@@ -726,19 +785,18 @@ void MainWindow::applyFilters()
             }
         }
 
-        // ★ 검색 필터
         if (!keyword.isEmpty()) {
             bool hit = false;
             if (searchScope == "module") {
                 hit = e.module.contains(keyword, Qt::CaseInsensitive);
             } else if (searchScope == "message") {
                 hit = e.message.contains(keyword, Qt::CaseInsensitive);
-            } else { // "all"
+            } else {
                 hit = e.module.contains(keyword, Qt::CaseInsensitive)
-                      || e.message.contains(keyword, Qt::CaseInsensitive)
-                      || e.level.contains(keyword, Qt::CaseInsensitive)
-                      || e.date.contains(keyword, Qt::CaseInsensitive)
-                      || e.timestamp.contains(keyword, Qt::CaseInsensitive);
+                || e.message.contains(keyword, Qt::CaseInsensitive)
+                    || e.level.contains(keyword, Qt::CaseInsensitive)
+                    || e.date.contains(keyword, Qt::CaseInsensitive)
+                    || e.timestamp.contains(keyword, Qt::CaseInsensitive);
             }
             if (!hit) continue;
         }
@@ -746,9 +804,7 @@ void MainWindow::applyFilters()
         filtered.append(e);
     }
 
-    // 정렬 (시간 기준)
     auto toDateTime = [](const LogEntry &e) -> QDateTime {
-        // DD/MM/YYYY 형식은 yyyy-MM-dd 로 정규화 후 파싱
         QString dateStr = e.date;
         static const QRegularExpression reDMY(R"(^(\d{2})/(\d{2})/(\d{4})$)");
         QRegularExpressionMatch m = reDMY.match(dateStr);
@@ -778,23 +834,25 @@ void MainWindow::applyFilters()
                       return (sortMode == "desc") ? da > db : da < db;
                   });
     }
-    // "original"이면 filtered는 m_allEntries 순서 그대로 (필터링만 적용)
 
     populateTable(filtered);
 
-    // 상태바에 필터 결과 반영
     QString statusMsg = QString("표시: %1줄 / 전체: %2줄")
                             .arg(filtered.size())
                             .arg(m_allEntries.size());
     if (!keyword.isEmpty())
         statusMsg += QString("  |  🔍 \"%1\" (%2 범위)").arg(keyword).arg(m_searchScopeCombo->currentText());
+
+    // ★ 감시 중이면 상태바 뒤에 표시
+    if (!m_watchedFiles.isEmpty())
+        statusMsg += QString("  |  👁 감시 중: %1개 파일").arg(m_watchedFiles.size());
+
     statusBar()->showMessage(statusMsg);
 }
 
-// ── 테이블 채우기 ────────────────────────────────────────
+// ── 테이블 채우기 ──────────────────────────────────────────
 void MainWindow::populateTable(const QVector<LogEntry> &entries)
 {
-    // 체크된 파일이 2개 이상이면 병합 모드 → 파일 색상 적용
     int checkedCount = 0;
     for (int i = 0; i < m_fileListWidget->count(); ++i) {
         if (m_fileListWidget->item(i)->checkState() == Qt::Checked)
@@ -814,7 +872,6 @@ void MainWindow::populateTable(const QVector<LogEntry> &entries)
         m_logTableWidget->setItem(row, 3, new QTableWidgetItem(entry.module));
         m_logTableWidget->setItem(row, 4, new QTableWidgetItem(entry.message));
 
-        // ★ 색상 우선순위: ERROR > WARN > 노이즈 > 파일 색상(병합 시)
         QColor rowColor;
         if (!entry.parsed) {
             rowColor = QColor("#f0f0f0");
@@ -835,7 +892,7 @@ void MainWindow::populateTable(const QVector<LogEntry> &entries)
     }
 }
 
-// ── CSV 내보내기 ─────────────────────────────────────────
+// ── CSV 내보내기 ───────────────────────────────────────────
 void MainWindow::onExportCsv()
 {
     if (m_logTableWidget->rowCount() == 0) {
@@ -895,4 +952,316 @@ void MainWindow::onGenerateReport()
         return;
     }
     m_reportGen.generate(this, m_allEntries, m_currentFile);
+}
+
+// ════════════════════════════════════════════════════════════
+// ★ 실시간 감시 구현
+// ════════════════════════════════════════════════════════════
+
+// ── 감시 시작/중지 토글 ────────────────────────────────────
+void MainWindow::onToggleWatch()
+{
+    // 현재 표시 중인 파일(들) 대상으로 토글
+    // 체크된 파일이 있으면 체크된 파일들, 없으면 m_currentFile
+    QStringList targets;
+    for (int i = 0; i < m_fileListWidget->count(); ++i) {
+        auto *it = m_fileListWidget->item(i);
+        if (it->checkState() == Qt::Checked)
+            targets << it->toolTip();
+    }
+    if (targets.isEmpty() && !m_currentFile.isEmpty())
+        targets << m_currentFile;
+
+    if (targets.isEmpty()) {
+        QMessageBox::information(this, "알림", "감시할 파일을 먼저 선택하세요.");
+        return;
+    }
+
+    // 대상 파일들이 이미 모두 감시 중이면 → 전체 중지
+    // 하나라도 감시 안 하고 있으면 → 전체 시작
+    bool allWatched = true;
+    for (const QString &p : targets) {
+        if (!m_watchedFiles.contains(p)) { allWatched = false; break; }
+    }
+
+    if (allWatched) {
+        for (const QString &p : targets)
+            stopWatching(p);
+    } else {
+        for (const QString &p : targets)
+            startWatching(p);
+    }
+
+    updateWatchUI();
+}
+
+// ── 단일 파일 감시 시작 ────────────────────────────────────
+void MainWindow::startWatching(const QString &filePath)
+{
+    if (m_watchedFiles.contains(filePath)) return;
+
+    // CSV 감시 불가 안내 (헤더 재해석 문제)
+    if (QFileInfo(filePath).suffix().toLower() == "csv") {
+        QMessageBox::information(this, "알림",
+                                 "CSV 파일은 실시간 감시를 지원하지 않습니다.\n(.log / .txt 파일만 지원)");
+        return;
+    }
+
+    // 현재 파일 끝 위치를 tail 시작점으로 저장
+    m_fileTailPos[filePath] = QFileInfo(filePath).size();
+    m_watchedFiles.insert(filePath);
+    m_watcher->addPath(filePath);
+
+    // 파일 목록 갱신 (🟢 아이콘 반영)
+    m_fileListWidget->viewport()->update();
+}
+
+// ── 단일 파일 감시 중지 ────────────────────────────────────
+void MainWindow::stopWatching(const QString &filePath)
+{
+    if (!m_watchedFiles.contains(filePath)) return;
+
+    m_watchedFiles.remove(filePath);
+    m_fileTailPos.remove(filePath);
+    m_watcher->removePath(filePath);
+
+    m_fileListWidget->viewport()->update();
+}
+
+// ── 전체 감시 중지 ─────────────────────────────────────────
+void MainWindow::stopAllWatching()
+{
+    for (const QString &p : m_watchedFiles)
+        m_watcher->removePath(p);
+    m_watchedFiles.clear();
+    m_fileTailPos.clear();
+    m_fileListWidget->viewport()->update();
+}
+
+// ── 감시 버튼/상태바 UI 갱신 ───────────────────────────────
+void MainWindow::updateWatchUI()
+{
+    bool anyWatching = !m_watchedFiles.isEmpty();
+
+    if (anyWatching) {
+        m_watchBtn->setText(QString("👁 감시 중 (%1)").arg(m_watchedFiles.size()));
+        m_watchBtn->setStyleSheet(m_watchBtn->property("activeStyle").toString());
+        m_watchBtn->setToolTip("클릭하면 감시를 중지합니다");
+    } else {
+        m_watchBtn->setText("👁 감시 시작");
+        m_watchBtn->setStyleSheet(m_watchBtn->property("inactiveStyle").toString());
+        m_watchBtn->setToolTip("현재 파일의 변경을 실시간으로 감시합니다");
+    }
+
+    // 상태바 갱신 (applyFilters 재호출 없이 직접 갱신)
+    // applyFilters가 이미 상태바 메시지에 감시 상태를 반영하므로
+    // 빈 m_allEntries일 때만 별도 처리
+    if (m_allEntries.isEmpty()) {
+        if (anyWatching) {
+            statusBar()->showMessage(
+                QString("👁 감시 중: %1개 파일").arg(m_watchedFiles.size()));
+        } else {
+            statusBar()->showMessage("파일을 추가하세요.");
+        }
+    } else {
+        applyFilters(); // 상태바에 감시 상태 포함시키기 위해 재호출
+    }
+}
+
+// ── 파일 변경 감지 시 ─────────────────────────────────────
+// QFileSystemWatcher::fileChanged 시그널 수신
+// 주의: 일부 에디터는 파일을 delete→recreate 방식으로 저장하므로
+//        파일이 사라졌다가 다시 생기면 감시자에서 제거됨 → 재등록 필요
+void MainWindow::onFileChanged(const QString &path)
+{
+    // 파일이 삭제/이동된 경우 (일부 에디터의 atomic save 동작)
+    if (!QFileInfo::exists(path)) {
+        // 감시자에서 자동 제거되므로 내부 상태만 동기화
+        // 잠시 후 재등록 시도 (500ms 대기)
+        QTimer::singleShot(500, this, [this, path]() {
+            if (m_watchedFiles.contains(path) && QFileInfo::exists(path)) {
+                m_watcher->addPath(path);
+                // 파일이 재생성됐으므로 전체 재파싱
+                qint64 dummy = 0;
+                QVector<LogEntry> newEntries = m_parser.parseTail(path, 0, dummy);
+                m_fileTailPos[path] = dummy;
+
+                for (LogEntry &e : newEntries) e.sourceFile = path;
+
+                // m_allEntries 중 이 파일 항목 교체
+                m_allEntries.erase(
+                    std::remove_if(m_allEntries.begin(), m_allEntries.end(),
+                                   [&path](const LogEntry &e) { return e.sourceFile == path; }),
+                    m_allEntries.end());
+                m_allEntries.append(newEntries);
+                applyFilters();
+            }
+        });
+        return;
+    }
+
+    // 정상 append: startOffset부터 새 줄만 읽기
+    qint64 startOffset = m_fileTailPos.value(path, 0);
+    qint64 endOffset   = startOffset;
+
+    QVector<LogEntry> newEntries = m_parser.parseTail(path, startOffset, endOffset);
+
+    if (newEntries.isEmpty()) {
+        // offset 갱신 (파일이 truncate됐을 수도 있음)
+        m_fileTailPos[path] = endOffset;
+        return;
+    }
+
+    m_fileTailPos[path] = endOffset;
+
+    for (LogEntry &e : newEntries)
+        e.sourceFile = path;
+
+    appendNewEntries(path, newEntries);
+}
+
+// ── 새 항목을 m_allEntries에 추가 + 테이블에 반영 ──────────
+void MainWindow::appendNewEntries(const QString &filePath,
+                                  const QVector<LogEntry> &newEntries)
+{
+    // m_allEntries에 추가
+    m_allEntries.append(newEntries);
+
+    // 현재 표시 중인 파일과 관련 없는 항목이면 m_allEntries에만 추가 (테이블 갱신 안 함)
+    // 현재 단독 뷰: m_currentFile 기준
+    // 병합 뷰: 체크된 파일 기준
+    QStringList visibleFiles;
+    int checkedCount = 0;
+    for (int i = 0; i < m_fileListWidget->count(); ++i) {
+        auto *it = m_fileListWidget->item(i);
+        if (it->checkState() == Qt::Checked) {
+            visibleFiles << it->toolTip();
+            ++checkedCount;
+        }
+    }
+    if (checkedCount == 0 && !m_currentFile.isEmpty())
+        visibleFiles << m_currentFile;
+
+    if (!visibleFiles.contains(filePath))
+        return; // 현재 보이지 않는 파일 → 테이블 갱신 없이 데이터만 추가
+
+    // 현재 필터 조건을 통과하는 새 항목만 테이블 맨 아래에 추가
+    bool showError = m_chkError->isChecked();
+    bool showWarn  = m_chkWarn->isChecked();
+    bool showInfo  = m_chkInfo->isChecked();
+    bool showNoise = m_chkNoise->isChecked();
+    QString keyword     = m_searchEdit->text().trimmed();
+    QString searchScope = m_searchScopeCombo->currentData().toString();
+    QDateTime dtFrom(m_dateFrom->date(), m_timeFrom->time());
+    QDateTime dtTo  (m_dateTo->date(),   m_timeTo->time());
+    QString sortMode = m_sortCombo->currentData().toString();
+
+    // 정렬 모드가 내림차순이면 테이블 전체 갱신이 필요 (새 항목이 위로 올라가야 하므로)
+    // 원본/오름차순이면 테이블 끝에만 추가
+    if (sortMode == "desc") {
+        applyFilters();
+        return;
+    }
+
+    int insertedFrom = m_logTableWidget->rowCount();
+    bool mergeMode = (checkedCount > 1);
+
+    for (const LogEntry &e : newEntries) {
+        // 레벨 필터
+        if (!e.parsed) {
+            if (!showNoise) continue;
+        } else if (e.level == "ERROR") {
+            if (!showError) continue;
+        } else if (e.level == "WARN") {
+            if (!showWarn) continue;
+        } else {
+            if (!showInfo) continue;
+        }
+
+        // 날짜/시간 필터
+        if (e.parsed) {
+            QString dtStr = e.date + " " + e.timestamp;
+            QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
+            if (!dt.isValid()) dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
+            if (dt.isValid() && (dt < dtFrom || dt > dtTo)) continue;
+        }
+
+        // 검색 필터
+        if (!keyword.isEmpty()) {
+            bool hit = false;
+            if (searchScope == "module")
+                hit = e.module.contains(keyword, Qt::CaseInsensitive);
+            else if (searchScope == "message")
+                hit = e.message.contains(keyword, Qt::CaseInsensitive);
+            else
+                hit = e.module.contains(keyword, Qt::CaseInsensitive)
+                      || e.message.contains(keyword, Qt::CaseInsensitive)
+                      || e.level.contains(keyword, Qt::CaseInsensitive)
+                      || e.date.contains(keyword, Qt::CaseInsensitive)
+                      || e.timestamp.contains(keyword, Qt::CaseInsensitive);
+            if (!hit) continue;
+        }
+
+        // 테이블에 행 추가
+        int row = m_logTableWidget->rowCount();
+        m_logTableWidget->insertRow(row);
+        m_logTableWidget->setItem(row, 0, new QTableWidgetItem(e.date));
+        m_logTableWidget->setItem(row, 1, new QTableWidgetItem(e.timestamp));
+        m_logTableWidget->setItem(row, 2, new QTableWidgetItem(e.level));
+        m_logTableWidget->setItem(row, 3, new QTableWidgetItem(e.module));
+        m_logTableWidget->setItem(row, 4, new QTableWidgetItem(e.message));
+
+        QColor rowColor;
+        if (!e.parsed) rowColor = QColor("#f0f0f0");
+        else if (e.level == "ERROR") rowColor = QColor("#ffe0e0");
+        else if (e.level == "WARN")  rowColor = QColor("#fff4cc");
+        else if (mergeMode && !e.sourceFile.isEmpty())
+            rowColor = m_fileColors.value(e.sourceFile, QColor("#FFFFFF"));
+
+        if (rowColor.isValid()) {
+            for (int col = 0; col < 5; ++col)
+                if (auto *cell = m_logTableWidget->item(row, col))
+                    cell->setBackground(rowColor);
+        }
+    }
+
+    int insertedTo = m_logTableWidget->rowCount() - 1;
+
+    if (insertedTo >= insertedFrom) {
+        // 새 행 하이라이트 + 스크롤
+        highlightNewRows(insertedFrom, insertedTo);
+        m_logTableWidget->scrollToItem(
+            m_logTableWidget->item(insertedTo, 0), QAbstractItemView::PositionAtBottom);
+    }
+
+    // 상태바 갱신
+    QString statusMsg = QString("표시: %1줄 / 전체: %2줄  |  ✨ 새 항목 +%3줄")
+                            .arg(m_logTableWidget->rowCount())
+                            .arg(m_allEntries.size())
+                            .arg(newEntries.size());
+    if (!m_watchedFiles.isEmpty())
+        statusMsg += QString("  |  👁 감시 중: %1개 파일").arg(m_watchedFiles.size());
+    statusBar()->showMessage(statusMsg);
+}
+
+// ── 신규 행 노란 하이라이트 페이드 시작 ────────────────────
+void MainWindow::highlightNewRows(int fromRow, int toRow)
+{
+    if (fromRow > toRow) return;
+
+    // 먼저 노란색으로 즉시 칠함
+    for (int row = fromRow; row <= toRow; ++row) {
+        for (int col = 0; col < 5; ++col) {
+            if (auto *cell = m_logTableWidget->item(row, col))
+                cell->setBackground(QColor(255, 255, 180)); // 밝은 노랑
+        }
+    }
+
+    // 페이드 범위 등록 후 타이머 시작
+    m_pendingHighlightRanges.append({fromRow, toRow});
+
+    if (!m_highlightTimer->isActive()) {
+        m_highlightStep = 0;
+        m_highlightTimer->start();
+    }
 }

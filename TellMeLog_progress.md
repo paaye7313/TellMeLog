@@ -61,7 +61,7 @@
   - 상태바에 검색어 및 범위 표시
   - 전체 초기화 버튼으로 검색어·범위도 함께 리셋
 
-  - [x] 리포트 생성
+- [x] 리포트 생성
   - QPrintPreviewDialog 기반 미리보기 (모달)
   - QTextDocument + QPrinter → PDF 저장
   - 요약 (레벨별 카운트, 로그 시간 범위)
@@ -81,6 +81,20 @@
   - 좌측 패널 초기 너비 240px로 고정
   - 상태바에 "병합: N개 파일 — 총 N줄" 표시
 
+- [x] 실시간 로그 감시 (QFileSystemWatcher)
+  - 툴바에 👁 감시 시작/중지 토글 버튼 추가
+  - 감시 활성 시 버튼 초록 배경으로 시각적 구분
+  - 파일 목록에서 감시 중인 파일에 🟢 아이콘 표시 (커스텀 델리게이트)
+  - 상태바에 "👁 감시 중: N개 파일" 상시 표시
+  - tail -f 방식: parseTail()로 마지막 읽은 offset 이후 새 줄만 파싱
+  - 새 항목 자동으로 테이블 끝에 추가 + 자동 스크롤
+  - 신규 행 노란 하이라이트 → 2초 페이드 아웃 (QTimer, 10단계)
+  - 정렬 모드가 내림차순이면 전체 applyFilters() 재호출로 처리
+  - 파일 삭제 후 재생성 시 (atomic save) 500ms 후 재등록 + 전체 재파싱
+  - 파일 제거 시 감시 자동 해제
+  - CSV 파일은 감시 미지원 (헤더 재해석 문제, 추후 구현 예정)
+  - QFileSystemWatcher는 Qt Core 포함 → 별도 CMake 모듈 추가 불필요
+
 ## 현재 코드 구조 (파일 업로드 없이 파악용)
 
 ### LogEntry 구조체 (logparser.h)
@@ -98,6 +112,7 @@ struct LogEntry {
 
 ### LogParser 클래스 (logparser.h/cpp)
 - `QVector<LogEntry> parse(const QString &filePath)` : 파일 파싱 후 entries 반환
+- `QVector<LogEntry> parseTail(const QString &filePath, qint64 startOffset, qint64 &outEndOffset)` : offset 이후 새 줄만 파싱 (실시간 감시용)
 - `int noiseCount()` : 마지막 파싱의 노이즈 줄 수
 - 내부적으로 3가지 regex 패턴 매칭 (Standard / Slash / ISO)
 
@@ -106,7 +121,7 @@ struct LogEntry {
 - `m_logTableWidget` : QTableWidget, 5컬럼 (날짜/시간/레벨/모듈/메시지)
 - `m_parser` : LogParser 인스턴스 (멤버 변수)
 - `m_currentFile` : 현재 선택된 파일 경로 (QString)
-- `m_addFileBtn / m_removeFileBtn / m_parseBtn / m_reportBtn` : QPushButton*
+- `m_addFileBtn / m_removeFileBtn / m_parseBtn / m_reportBtn / m_csvBtn / m_watchBtn` : QPushButton*
 - `parseAndDisplay(filePath)` → `m_parser.parse()` 호출 → `populateTable()` 호출
 - `AUTO_PARSE_LIMIT` = 1MB, 초과 시 m_parseBtn 표시
 - `m_allEntries` : QVector<LogEntry>, 전체 파싱 결과 보관 (필터용)
@@ -121,13 +136,24 @@ struct LogEntry {
 - `m_fileColors` : QMap<QString, QColor>, 파일 경로 → 고유 배경색
 - `mergeAndDisplay(filePaths)` → 다중 파일 파싱 후 병합, populateTable() 호출
 - `eventFilter()` → 파일 목록 체크박스/텍스트 클릭 영역 분리 처리
+- `m_watcher` : QFileSystemWatcher*, 파일 변경 감지
+- `m_watchedFiles` : QSet<QString>, 현재 감시 중인 파일 경로들
+- `m_fileTailPos` : QMap<QString, qint64>, 파일별 마지막 읽기 offset
+- `m_highlightTimer` : QTimer*, 신규 행 하이라이트 페이드용
+- `onToggleWatch()` : 감시 시작/중지 토글
+- `onFileChanged(path)` : QFileSystemWatcher 시그널 수신 → parseTail() → appendNewEntries()
+- `appendNewEntries(path, entries)` : 새 항목을 m_allEntries에 추가 + 테이블 반영
+- `highlightNewRows(fromRow, toRow)` : 신규 행 노란→원래색 페이드
 
 ### 툴바 버튼 연결
 - 파일 추가 → onAddFile()
 - 파일 제거 → onRemoveFile()
 - 파싱 시작 → onParseFile() (대용량 전용, 평소 hidden)
-- 리포트 생성 → onGenerateReport() (미구현 stub)
+- 감시 시작/중지 → onToggleWatch()
+- CSV 내보내기 → onExportCsv()
+- 리포트 생성 → onGenerateReport()
 
 ## 다음 단계
 
-- [ ] 실시간 로그 감시 (QFileSystemWatcher)
+- [ ] CSV 실시간 감시 지원 (dateCol 캐싱: QMap<QString, int> m_csvDateColCache)
+- [ ] 추가 기능 검토
