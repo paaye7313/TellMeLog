@@ -41,16 +41,16 @@ C++/Qt를 선택한 이유는 장비 제어·생산기술 직무에서 Qt 기반
 ---
 
 ## 🎬 데모
-
-![데모 파싱](docs/demo_parse.gif)
-![데모 필터서치](docs/demo_filter_search.gif)
-
-
 > 1. 파일 추가 → 자동 파싱 → 로그 표시
+![데모 파싱](docs/demo_parse.gif)
 > 2. ERROR 필터 → 키워드 검색 → 결과 확인
+![데모 필터서치](docs/demo_filter_search.gif)
 > 3. 다중 파일 선택 → 타임스탬프 병합 뷰
-> 4. PDF 리포트 생성
+![데모 머지](docs/demo_merge.gif)
+> 4. PDF 리포트 생성, CSV 내보내기
+![데모 리포트](docs/demo_report.gif)
 > 5. 실시간 감시 → 새 로그 자동 갱신
+![데모 감시](docs/demo_watch.gif)
 
 ---
 

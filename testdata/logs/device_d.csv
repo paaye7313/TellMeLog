@@ -1,0 +1,57 @@
+날짜,시간,레벨,모듈,메시지
+2024-03-15,08:00:00.512,INFO,VisionSys,Camera initialized. Resolution: 1920x1080
+2024-03-15,08:00:00.988,INFO,VisionSys,Calibration loaded. Version: v2.3.1
+2024-03-15,08:00:01.021,INFO,MotionCtrl,System initialized. Axis count: 3
+2024-03-15,08:00:01.100,INFO,IOCtrl,PLC connection established. IP: 192.168.1.10
+2024-03-15,08:00:01.204,INFO,MotionCtrl,Home position set. X=0 Y=0 Z=0
+2024-03-15,08:00:01.305,INFO,IOCtrl,Input map loaded. 32 channels active.
+2024-03-15,08:00:02.001,INFO,IOCtrl,Sensor polling started. Interval: 100ms
+2024-03-15,08:00:02.310,INFO,MotionCtrl,Move command received. Target: X=120 Y=45
+2024-03-15,08:00:02.450,INFO,VisionSys,Inspection started. Part ID: #A001
+2024-03-15,08:00:02.891,WARN,MotionCtrl,"Velocity limit approached. Current: 980mm/s, Limit: 1000mm/s"
+2024-03-15,08:00:02.991,INFO,VisionSys,Image captured. Exposure: 12ms
+2024-03-15,08:00:03.105,INFO,MotionCtrl,Move complete. Position confirmed.
+2024-03-15,08:00:03.220,INFO,VisionSys,Pattern match score: 98.4%  PASS
+2024-03-15,08:00:03.500,INFO,IOCtrl,Conveyor belt signal: ON
+2024-03-15,08:00:04.001,INFO,VisionSys,Inspection result: OK. Part ID: #A001
+2024-03-15,08:00:04.210,INFO,IOCtrl,Part detected. Sensor: S01
+2024-03-15,08:00:05.110,INFO,IOCtrl,Part detected. Sensor: S02
+2024-03-15,08:00:05.300,INFO,VisionSys,Inspection started. Part ID: #A002
+2024-03-15,08:00:05.772,INFO,MotionCtrl,Move command received. Target: X=0 Y=0
+2024-03-15,08:00:05.812,WARN,VisionSys,Low contrast detected. Adjusting exposure.
+2024-03-15,08:00:06.002,WARN,IOCtrl,Sensor S03 response delayed. Timeout: 120ms
+2024-03-15,08:00:06.100,INFO,VisionSys,Image recaptured. Exposure: 18ms
+2024-03-15,08:00:06.125,INFO,IOCtrl,Sensor S03 recovered.
+2024-03-15,08:00:06.334,ERROR,MotionCtrl,Encoder signal lost on Z-axis. Code: E0x11
+2024-03-15,08:00:06.335,ERROR,MotionCtrl,Emergency stop triggered.
+2024-03-15,08:00:06.450,INFO,VisionSys,Pattern match score: 95.1%  PASS
+2024-03-15,08:00:06.880,INFO,VisionSys,Inspection result: OK. Part ID: #A002
+2024-03-15,08:00:07.440,INFO,IOCtrl,Part detected. Sensor: S03
+2024-03-15,08:00:08.001,WARN,MotionCtrl,Retry attempt 1/3 on Z-axis encoder.
+2024-03-15,08:00:08.210,INFO,VisionSys,Inspection started. Part ID: #A003
+2024-03-15,08:00:08.731,INFO,VisionSys,Image captured. Exposure: 12ms
+2024-03-15,08:00:09.002,ERROR,VisionSys,Pattern match score: 41.2%  FAIL
+2024-03-15,08:00:09.003,ERROR,VisionSys,Inspection result: NG. Part ID: #A003. Defect: Surface scratch
+2024-03-15,08:00:09.210,WARN,VisionSys,NG count reached threshold: 1/10
+2024-03-15,08:00:09.330,ERROR,IOCtrl,PLC communication timeout. Retry: 1/3
+2024-03-15,08:00:09.512,WARN,MotionCtrl,Retry attempt 2/3 on Z-axis encoder.
+2024-03-15,08:00:10.831,ERROR,IOCtrl,PLC communication timeout. Retry: 2/3
+2024-03-15,08:00:11.003,INFO,MotionCtrl,Z-axis encoder recovered.
+2024-03-15,08:00:11.210,INFO,MotionCtrl,Resume from emergency stop.
+2024-03-15,08:00:11.500,INFO,VisionSys,Inspection started. Part ID: #A004
+2024-03-15,08:00:12.002,INFO,IOCtrl,PLC communication restored.
+2024-03-15,08:00:12.014,INFO,VisionSys,Pattern match score: 99.1%  PASS
+2024-03-15,08:00:12.210,WARN,IOCtrl,2 sensor reads missed during PLC outage.
+2024-03-15,08:00:12.330,INFO,VisionSys,Inspection result: OK. Part ID: #A004
+2024-03-15,08:00:13.100,INFO,IOCtrl,Conveyor belt signal: OFF
+2024-03-15,08:00:13.445,INFO,MotionCtrl,Move command received. Target: X=200 Y=100
+2024-03-15,08:00:14.001,INFO,MotionCtrl,Move complete. Position confirmed.
+2024-03-15,08:00:14.780,INFO,VisionSys,"Session summary. Total: 4, OK: 3, NG: 1"
+2024-03-15,08:00:15.220,INFO,IOCtrl,Output signal sent. Channel: OUT04 (Reject gate open)
+2024-03-15,08:00:15.890,INFO,IOCtrl,Output signal sent. Channel: OUT04 (Reject gate close)
+2024-03-15,08:00:16.782,WARN,MotionCtrl,"Temperature sensor reading high. Temp: 68C, Threshold: 70C"
+2024-03-15,08:00:18.003,INFO,MotionCtrl,Cooling fan speed increased.
+2024-03-15,08:00:18.005,INFO,IOCtrl,Cycle complete. IO events: 12
+2024-03-15,08:00:20.001,INFO,IOCtrl,Standby mode.
+2024-03-15,08:00:20.115,INFO,MotionCtrl,Temperature normalized. Temp: 62C
+2024-03-15,08:00:22.340,INFO,MotionCtrl,Cycle complete. Total moves: 3
