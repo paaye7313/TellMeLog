@@ -1,0 +1,20 @@
+2024-03-15 08:00:00.512 [INFO]  [VisionSys] Camera initialized. Resolution: 1920x1080
+2024-03-15 08:00:00.988 [INFO]  [VisionSys] Calibration loaded. Version: v2.3.1
+2024-03-15 08:00:02.450 [INFO]  [VisionSys] Inspection started. Part ID: #A001
+2024-03-15 08:00:02.991 [INFO]  [VisionSys] Image captured. Exposure: 12ms
+2024-03-15 08:00:03.220 [INFO]  [VisionSys] Pattern match score: 98.4%  PASS
+2024-03-15 08:00:04.001 [INFO]  [VisionSys] Inspection result: OK. Part ID: #A001
+2024-03-15 08:00:05.300 [INFO]  [VisionSys] Inspection started. Part ID: #A002
+2024-03-15 08:00:05.812 [WARN]  [VisionSys] Low contrast detected. Adjusting exposure.
+2024-03-15 08:00:06.100 [INFO]  [VisionSys] Image recaptured. Exposure: 18ms
+2024-03-15 08:00:06.450 [INFO]  [VisionSys] Pattern match score: 95.1%  PASS
+2024-03-15 08:00:06.880 [INFO]  [VisionSys] Inspection result: OK. Part ID: #A002
+2024-03-15 08:00:08.210 [INFO]  [VisionSys] Inspection started. Part ID: #A003
+2024-03-15 08:00:08.731 [INFO]  [VisionSys] Image captured. Exposure: 12ms
+2024-03-15 08:00:09.002 [ERROR] [VisionSys] Pattern match score: 41.2%  FAIL
+2024-03-15 08:00:09.003 [ERROR] [VisionSys] Inspection result: NG. Part ID: #A003. Defect: Surface scratch
+2024-03-15 08:00:09.210 [WARN]  [VisionSys] NG count reached threshold: 1/10
+2024-03-15 08:00:11.500 [INFO]  [VisionSys] Inspection started. Part ID: #A004
+2024-03-15 08:00:12.014 [INFO]  [VisionSys] Pattern match score: 99.1%  PASS
+2024-03-15 08:00:12.330 [INFO]  [VisionSys] Inspection result: OK. Part ID: #A004
+2024-03-15 08:00:14.780 [INFO]  [VisionSys] Session summary. Total: 4, OK: 3, NG: 1

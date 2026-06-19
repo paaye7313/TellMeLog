@@ -1,0 +1,18 @@
+2024-03-15 08:00:01.100 [INFO]  [IOCtrl] PLC connection established. IP: 192.168.1.10
+2024-03-15 08:00:01.305 [INFO]  [IOCtrl] Input map loaded. 32 channels active.
+2024-03-15 08:00:02.001 [INFO]  [IOCtrl] Sensor polling started. Interval: 100ms
+2024-03-15 08:00:03.500 [INFO]  [IOCtrl] Conveyor belt signal: ON
+2024-03-15 08:00:04.210 [INFO]  [IOCtrl] Part detected. Sensor: S01
+2024-03-15 08:00:05.110 [INFO]  [IOCtrl] Part detected. Sensor: S02
+2024-03-15 08:00:06.002 [WARN]  [IOCtrl] Sensor S03 response delayed. Timeout: 120ms
+2024-03-15 08:00:06.125 [INFO]  [IOCtrl] Sensor S03 recovered.
+2024-03-15 08:00:07.440 [INFO]  [IOCtrl] Part detected. Sensor: S03
+2024-03-15 08:00:09.330 [ERROR] [IOCtrl] PLC communication timeout. Retry: 1/3
+2024-03-15 08:00:10.831 [ERROR] [IOCtrl] PLC communication timeout. Retry: 2/3
+2024-03-15 08:00:12.002 [INFO]  [IOCtrl] PLC communication restored.
+2024-03-15 08:00:12.210 [WARN]  [IOCtrl] 2 sensor reads missed during PLC outage.
+2024-03-15 08:00:13.100 [INFO]  [IOCtrl] Conveyor belt signal: OFF
+2024-03-15 08:00:15.220 [INFO]  [IOCtrl] Output signal sent. Channel: OUT04 (Reject gate open)
+2024-03-15 08:00:15.890 [INFO]  [IOCtrl] Output signal sent. Channel: OUT04 (Reject gate close)
+2024-03-15 08:00:18.005 [INFO]  [IOCtrl] Cycle complete. IO events: 12
+2024-03-15 08:00:20.001 [INFO]  [IOCtrl] Standby mode.

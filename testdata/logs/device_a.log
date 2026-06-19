@@ -1,0 +1,18 @@
+2024-03-15 08:00:01.021 [INFO]  [MotionCtrl] System initialized. Axis count: 3
+2024-03-15 08:00:01.204 [INFO]  [MotionCtrl] Home position set. X=0 Y=0 Z=0
+2024-03-15 08:00:02.310 [INFO]  [MotionCtrl] Move command received. Target: X=120 Y=45
+2024-03-15 08:00:02.891 [WARN]  [MotionCtrl] Velocity limit approached. Current: 980mm/s, Limit: 1000mm/s
+2024-03-15 08:00:03.105 [INFO]  [MotionCtrl] Move complete. Position confirmed.
+2024-03-15 08:00:05.772 [INFO]  [MotionCtrl] Move command received. Target: X=0 Y=0
+2024-03-15 08:00:06.334 [ERROR] [MotionCtrl] Encoder signal lost on Z-axis. Code: E0x11
+2024-03-15 08:00:06.335 [ERROR] [MotionCtrl] Emergency stop triggered.
+2024-03-15 08:00:08.001 [WARN]  [MotionCtrl] Retry attempt 1/3 on Z-axis encoder.
+2024-03-15 08:00:09.512 [WARN]  [MotionCtrl] Retry attempt 2/3 on Z-axis encoder.
+2024-03-15 08:00:11.003 [INFO]  [MotionCtrl] Z-axis encoder recovered.
+2024-03-15 08:00:11.210 [INFO]  [MotionCtrl] Resume from emergency stop.
+2024-03-15 08:00:13.445 [INFO]  [MotionCtrl] Move command received. Target: X=200 Y=100
+2024-03-15 08:00:14.001 [INFO]  [MotionCtrl] Move complete. Position confirmed.
+2024-03-15 08:00:16.782 [WARN]  [MotionCtrl] Temperature sensor reading high. Temp: 68C, Threshold: 70C
+2024-03-15 08:00:18.003 [INFO]  [MotionCtrl] Cooling fan speed increased.
+2024-03-15 08:00:20.115 [INFO]  [MotionCtrl] Temperature normalized. Temp: 62C
+2024-03-15 08:00:22.340 [INFO]  [MotionCtrl] Cycle complete. Total moves: 3
