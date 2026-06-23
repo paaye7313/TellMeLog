@@ -23,7 +23,9 @@ public:
     LogParser() = default;
 
     // 파일 경로를 받아 파싱 후 결과 반환
-    QVector<LogEntry> parse(const QString &filePath);
+    QVector<LogEntry> parse(const QString &filePath,
+                            std::function<void(int)> progressCallback = nullptr,
+                            std::function<void(const LogEntry&)> entryCallback = nullptr);
 
     // ★ 실시간 감시용: startOffset 위치부터 끝까지만 파싱
     //   반환값: 새로 파싱된 엔트리들

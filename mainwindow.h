@@ -13,6 +13,7 @@
 #include <QDateEdit>
 #include <QTimeEdit>
 #include <QLineEdit>
+#include <QProgressBar>
 #include <QMap>
 #include <QSet>           // ★ 감시 파일 집합
 #include <QFileSystemWatcher> // ★ 실시간 감시
@@ -72,6 +73,10 @@ private:
     QPushButton  *m_csvBtn;
     QPushButton  *m_watchBtn;   // ★ 감시 토글 버튼
 
+    QToolBar *m_toolBar = nullptr;
+    QAction *m_parseBtnAction = nullptr;
+    QProgressBar *m_progressBar = nullptr;
+
     // ── 필터 바 위젯 ──
     QCheckBox      *m_chkError;
     QCheckBox      *m_chkWarn;
@@ -90,6 +95,8 @@ private:
     LogParser          m_parser;
     QString            m_currentFile;
     QVector<LogEntry>  m_allEntries;
+
+    QMap<QString, QVector<LogEntry>> m_entryCache;
 
     // ── 병합 색상 ──
     QMap<QString, QColor> m_fileColors;

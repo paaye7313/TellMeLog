@@ -4,7 +4,9 @@
 #include <QRegularExpression>
 #include <QFileInfo>  // ★ 추가
 
-QVector<LogEntry> LogParser::parse(const QString &filePath)
+QVector<LogEntry> LogParser::parse(const QString &filePath,
+                                   std::function<void(int)> progressCallback,
+                                   std::function<void(const LogEntry&)> entryCallback)
 {
     m_noiseCount = 0;
 
@@ -22,16 +24,27 @@ QVector<LogEntry> LogParser::parse(const QString &filePath)
     QTextStream in(&file);
     in.setEncoding(QStringConverter::Utf8);
 
+    qint64 fileSize = file.size();
+    int lastReported = -1;
+
     while (!in.atEnd()) {
         QString line = in.readLine().trimmed();
         if (line.isEmpty())
             continue;
-
         LogEntry entry = parseLine(line);
         if (!entry.parsed)
             ++m_noiseCount;
-
         entries.append(entry);
+        if (entryCallback)
+            entryCallback(entry);
+
+        if (progressCallback && fileSize > 0) {
+            int pct = static_cast<int>(file.pos() * 90 / fileSize);
+            if (pct != lastReported) {
+                lastReported = pct;
+                progressCallback(pct);
+            }
+        }
     }
 
     file.close();

@@ -25,6 +25,8 @@
 #include <QEvent>
 #include <QFileSystemWatcher>  // ★ 추가
 #include <QTimer>              // ★ 추가
+#include <QtConcurrent>
+#include <QFutureWatcher>
 
 // ── 파일 목록 커스텀 델리게이트 ─────────────────────────────
 // 역할:
@@ -171,6 +173,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupUI();
     setupToolBar();
+    m_progressBar = new QProgressBar(this);
+    m_progressBar->setRange(0, 100);
+    m_progressBar->setFixedWidth(200);
+    m_progressBar->setVisible(false);
+    statusBar()->addPermanentWidget(m_progressBar);
     statusBar()->showMessage("파일을 추가하세요.");
 }
 
@@ -464,7 +471,23 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
                     statusBar()->showMessage("파일을 체크하거나 선택하세요.");
                 } else if (checkedPaths.size() == 1) {
                     m_currentFile = checkedPaths.first();
-                    parseAndDisplay(m_currentFile);
+                    QFileInfo fi(m_currentFile);
+                    if (fi.size() <= AUTO_PARSE_LIMIT) {
+                        parseAndDisplay(m_currentFile);
+                    } else {
+                        m_parseBtnAction->setVisible(true);
+                        m_toolBar->layout()->invalidate();
+                        m_toolBar->repaint();
+                        m_logTableWidget->setRowCount(0);
+                        m_allEntries.clear();
+
+                        qDebug() << "parseBtn visible:" << m_parseBtn->isVisible();
+                        qDebug() << "parseBtn geometry:" << m_parseBtn->geometry();
+
+                        statusBar()->showMessage(
+                            QString("대용량 파일 (%1 MB) — [▶ 파싱 시작] 버튼을 누르세요.")
+                                .arg(fi.size() / 1024.0 / 1024.0, 0, 'f', 1));
+                    }
                 } else {
                     mergeAndDisplay(checkedPaths);
                 }
@@ -485,8 +508,8 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 // ── 툴바 구성 ★ 감시 버튼 추가 ────────────────────────────
 void MainWindow::setupToolBar()
 {
-    QToolBar *toolBar = addToolBar("메인 툴바");
-    toolBar->setMovable(false);
+    m_toolBar = addToolBar("메인 툴바");
+    m_toolBar->setMovable(false);
 
     m_addFileBtn    = new QPushButton("📄 파일 추가", this);
     m_removeFileBtn = new QPushButton("🗑 파일 제거", this);
@@ -517,22 +540,23 @@ void MainWindow::setupToolBar()
     m_watchBtn->setProperty("activeStyle",   watchBtnActiveStyle);
     m_watchBtn->setProperty("inactiveStyle", btnStyle);
 
-    m_parseBtn->setVisible(false);
+    m_parseBtn->setStyleSheet(btnStyle);
+    m_parseBtnAction = m_toolBar->addWidget(m_parseBtn);
+    m_parseBtnAction->setVisible(false);
 
     QWidget *spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
-    toolBar->addWidget(m_addFileBtn);
-    toolBar->addWidget(m_removeFileBtn);
-    toolBar->addWidget(m_parseBtn);
-    toolBar->addWidget(m_watchBtn);   // ★ 파싱 버튼 바로 뒤에 배치
-    toolBar->addWidget(spacer);
-    toolBar->addWidget(m_csvBtn);
-    toolBar->addWidget(m_reportBtn);
+    m_toolBar->addWidget(m_addFileBtn);
+    m_toolBar->addWidget(m_removeFileBtn);
+    m_toolBar->addWidget(m_watchBtn);   // ★ 파싱 버튼 바로 뒤에 배치
+    m_toolBar->addWidget(spacer);
+    m_toolBar->addWidget(m_csvBtn);
+    m_toolBar->addWidget(m_reportBtn);
 
     connect(m_addFileBtn,    &QPushButton::clicked, this, &MainWindow::onAddFile);
     connect(m_removeFileBtn, &QPushButton::clicked, this, &MainWindow::onRemoveFile);
-    connect(m_parseBtn,      &QPushButton::clicked, this, &MainWindow::onParseFile);
+    connect(m_parseBtn, &QPushButton::clicked, this, &MainWindow::onParseFile);
     connect(m_csvBtn,        &QPushButton::clicked, this, &MainWindow::onExportCsv);
     connect(m_reportBtn,     &QPushButton::clicked, this, &MainWindow::onGenerateReport);
     connect(m_watchBtn,      &QPushButton::clicked, this, &MainWindow::onToggleWatch); // ★
@@ -610,7 +634,7 @@ void MainWindow::onRemoveFile()
 
     m_logTableWidget->setRowCount(0);
     m_allEntries.clear();
-    m_parseBtn->setVisible(false);
+    m_parseBtnAction->setVisible(false);
     m_currentFile.clear();
     statusBar()->showMessage("파일이 제거되었습니다.");
     updateWatchUI();  // ★ 상태바 갱신
@@ -619,15 +643,19 @@ void MainWindow::onRemoveFile()
 // ── 파일 선택 시 ───────────────────────────────────────────
 void MainWindow::onFileSelected(QListWidgetItem *item)
 {
+    qDebug() << "onFileSelected called:" << item->toolTip();
     m_currentFile = item->toolTip();
     QFileInfo fi(m_currentFile);
 
+    qDebug() << "file size:" << fi.size();
+    qDebug() << "AUTO_PARSE_LIMIT:" << AUTO_PARSE_LIMIT;
+
     if (fi.size() <= AUTO_PARSE_LIMIT) {
-        m_parseBtn->setVisible(false);
+        m_parseBtnAction->setVisible(false);
         statusBar()->showMessage(QString("파싱 중... (%1)").arg(fi.fileName()));
         parseAndDisplay(m_currentFile);
     } else {
-        m_parseBtn->setVisible(true);
+        m_parseBtnAction->setVisible(true);
         m_logTableWidget->setRowCount(0);
         m_allEntries.clear();
         statusBar()->showMessage(
@@ -642,59 +670,137 @@ void MainWindow::onParseFile()
     if (m_currentFile.isEmpty()) return;
     statusBar()->showMessage("파싱 중...");
     parseAndDisplay(m_currentFile);
-    m_parseBtn->setVisible(false);
+    m_parseBtnAction->setVisible(false);
 }
 
 // ── 실제 파싱 + 테이블 표시 ────────────────────────────────
 void MainWindow::parseAndDisplay(const QString &filePath)
 {
-    m_allEntries = m_parser.parse(filePath);
+    // 캐시에 있으면 재파싱 없이 바로 표시
+    if (m_entryCache.contains(filePath)) {
+        m_allEntries = m_entryCache[filePath];
 
-    for (LogEntry &e : m_allEntries)
-        e.sourceFile = filePath;
+        QDateTime minDt, maxDt;
+        for (const LogEntry &e : m_allEntries) {
+            if (!e.parsed) continue;
+            QString dtStr = e.date + " " + e.timestamp;
+            QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
+            if (!dt.isValid()) dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
+            if (!dt.isValid()) continue;
+            if (!minDt.isValid() || dt < minDt) minDt = dt;
+            if (!maxDt.isValid() || dt > maxDt) maxDt = dt;
+        }
+        if (minDt.isValid() && maxDt.isValid()) {
+            m_dateFrom->blockSignals(true); m_dateTo->blockSignals(true);
+            m_timeFrom->blockSignals(true); m_timeTo->blockSignals(true);
+            m_dateFrom->setDate(minDt.date()); m_dateTo->setDate(maxDt.date());
+            m_timeFrom->setTime(minDt.time()); m_timeTo->setTime(maxDt.time());
+            m_dateFrom->blockSignals(false); m_dateTo->blockSignals(false);
+            m_timeFrom->blockSignals(false); m_timeTo->blockSignals(false);
+        }
 
-    // ★ 감시 중인 파일이면 tail offset 갱신 (전체 파일 크기로 초기화)
-    if (m_watchedFiles.contains(filePath)) {
-        m_fileTailPos[filePath] = QFileInfo(filePath).size();
+        applyFilters();
+        QFileInfo fi(filePath);
+        statusBar()->showMessage(
+            QString("%1 — %2줄 (캐시)").arg(fi.fileName()).arg(m_allEntries.size()));
+        setWindowTitle("TellMeLog — " + fi.fileName());
+        return;
     }
 
-    QDateTime minDt, maxDt;
-    for (const LogEntry &e : m_allEntries) {
-        if (!e.parsed) continue;
-        QString dtStr = e.date + " " + e.timestamp;
-        QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
-        if (!dt.isValid())
-            dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
-        if (!dt.isValid()) continue;
+    // 백그라운드 파싱
+    statusBar()->showMessage(QString("파싱 중... (%1)").arg(QFileInfo(filePath).fileName()));
+    m_addFileBtn->setEnabled(false);
+    m_removeFileBtn->setEnabled(false);
+    m_parseBtnAction->setVisible(false);
+    statusBar()->showMessage(QString("파싱 중... (%1)").arg(QFileInfo(filePath).fileName()));
 
-        if (!minDt.isValid() || dt < minDt) minDt = dt;
-        if (!maxDt.isValid() || dt > maxDt) maxDt = dt;
-    }
+    auto *watcher = new QFutureWatcher<QVector<LogEntry>>(this);
 
-    if (minDt.isValid() && maxDt.isValid()) {
-        m_dateFrom->blockSignals(true);
-        m_dateTo->blockSignals(true);
-        m_timeFrom->blockSignals(true);
-        m_timeTo->blockSignals(true);
-        m_dateFrom->setDate(minDt.date());
-        m_dateTo->setDate(maxDt.date());
-        m_timeFrom->setTime(minDt.time());
-        m_timeTo->setTime(maxDt.time());
-        m_dateFrom->blockSignals(false);
-        m_dateTo->blockSignals(false);
-        m_timeFrom->blockSignals(false);
-        m_timeTo->blockSignals(false);
-    }
+    connect(watcher, &QFutureWatcher<QVector<LogEntry>>::finished, this,
+            [this, filePath, watcher]() {
+                QVector<LogEntry> entries = watcher->result();
+                watcher->deleteLater();
+                m_progressBar->setValue(95);
+                m_addFileBtn->setEnabled(true);
+                m_removeFileBtn->setEnabled(true);
+                m_progressBar->setVisible(false);
 
-    applyFilters();
+                for (LogEntry &e : entries)
+                    e.sourceFile = filePath;
 
-    QFileInfo fi(filePath);
-    statusBar()->showMessage(
-        QString("%1 — %2줄 파싱 완료 (노이즈: %3줄)")
-            .arg(fi.fileName())
-            .arg(m_allEntries.size())
-            .arg(m_parser.noiseCount()));
-    setWindowTitle("TellMeLog — " + fi.fileName());
+                m_entryCache[filePath] = entries;
+                m_allEntries = entries;
+
+                if (m_watchedFiles.contains(filePath))
+                    m_fileTailPos[filePath] = QFileInfo(filePath).size();
+
+                QDateTime minDt, maxDt;
+                for (const LogEntry &e : m_allEntries) {
+                    if (!e.parsed) continue;
+                    QString dtStr = e.date + " " + e.timestamp;
+                    QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
+                    if (!dt.isValid())
+                        dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
+                    if (!dt.isValid()) continue;
+                    if (!minDt.isValid() || dt < minDt) minDt = dt;
+                    if (!maxDt.isValid() || dt > maxDt) maxDt = dt;
+                }
+                if (minDt.isValid() && maxDt.isValid()) {
+                    m_dateFrom->blockSignals(true); m_dateTo->blockSignals(true);
+                    m_timeFrom->blockSignals(true); m_timeTo->blockSignals(true);
+                    m_dateFrom->setDate(minDt.date()); m_dateTo->setDate(maxDt.date());
+                    m_timeFrom->setTime(minDt.time()); m_timeTo->setTime(maxDt.time());
+                    m_dateFrom->blockSignals(false); m_dateTo->blockSignals(false);
+                    m_timeFrom->blockSignals(false); m_timeTo->blockSignals(false);
+                }
+
+                applyFilters();
+                m_progressBar->setValue(100);
+
+                QFileInfo fi(filePath);
+                statusBar()->showMessage(
+                    QString("%1 — %2줄 파싱 완료 (노이즈: %3줄)")
+                        .arg(fi.fileName())
+                        .arg(m_allEntries.size())
+                        .arg(m_parser.noiseCount()));
+                setWindowTitle("TellMeLog — " + fi.fileName());
+                m_parseBtnAction->setVisible(false);
+            });
+
+    m_progressBar->setValue(0);
+    m_progressBar->setVisible(true);
+
+    m_logTableWidget->setRowCount(0);
+
+    watcher->setFuture(QtConcurrent::run([this, filePath]() {
+        return m_parser.parse(filePath,
+                              [this](int pct) {
+                                  QMetaObject::invokeMethod(this, [this, pct]() {
+                                      m_progressBar->setValue(pct);
+                                  }, Qt::QueuedConnection);
+                              },
+                              [this](const LogEntry &entry) {
+                                  QMetaObject::invokeMethod(this, [this, entry]() {
+                                      int row = m_logTableWidget->rowCount();
+                                      m_logTableWidget->insertRow(row);
+                                      m_logTableWidget->setItem(row, 0, new QTableWidgetItem(entry.date));
+                                      m_logTableWidget->setItem(row, 1, new QTableWidgetItem(entry.timestamp));
+                                      m_logTableWidget->setItem(row, 2, new QTableWidgetItem(entry.level));
+                                      m_logTableWidget->setItem(row, 3, new QTableWidgetItem(entry.module));
+                                      m_logTableWidget->setItem(row, 4, new QTableWidgetItem(entry.message));
+
+                                      QColor rowColor;
+                                      if (!entry.parsed)       rowColor = QColor("#f0f0f0");
+                                      else if (entry.level == "ERROR") rowColor = QColor("#ffe0e0");
+                                      else if (entry.level == "WARN")  rowColor = QColor("#fff4cc");
+                                      if (rowColor.isValid()) {
+                                          for (int col = 0; col < 5; ++col)
+                                              if (auto *cell = m_logTableWidget->item(row, col))
+                                                  cell->setBackground(rowColor);
+                                      }
+                                  }, Qt::QueuedConnection);
+                              });
+    }));
 }
 
 // ── 다중 파일 병합 파싱 ────────────────────────────────────
@@ -733,8 +839,6 @@ void MainWindow::mergeAndDisplay(const QStringList &filePaths)
         m_dateFrom->blockSignals(false); m_dateTo->blockSignals(false);
         m_timeFrom->blockSignals(false); m_timeTo->blockSignals(false);
     }
-
-    applyFilters();
 
     statusBar()->showMessage(
         QString("병합: %1개 파일 — 총 %2줄 (노이즈: %3줄)")

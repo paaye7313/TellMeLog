@@ -68,7 +68,7 @@ C++/Qt를 선택한 이유는 장비 제어·생산기술 직무에서 Qt 기반
          ▼
   ┌─────────────┐
   │  LogEntry   │  ← 공통 데이터 모델
-  │  (구조체)    │     date / time / level / module / message / sourceFile
+  │  (구조체)   │     date / time / level / module / message / sourceFile
   └──────┬──────┘
          │
          ▼

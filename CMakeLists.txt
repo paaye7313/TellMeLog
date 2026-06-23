@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.19)
 project(TellMeLog LANGUAGES CXX)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets PrintSupport LinguistTools)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets PrintSupport Concurrent LinguistTools)
 
 qt_standard_project_setup()
 
@@ -27,6 +27,7 @@ target_link_libraries(TellMeLog
         Qt::Core
         Qt::Widgets
         Qt::PrintSupport
+        Qt::Concurrent
 )
 
 install(TARGETS TellMeLog
