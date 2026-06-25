@@ -18,6 +18,7 @@
 #include <QSet>           // ★ 감시 파일 집합
 #include <QFileSystemWatcher> // ★ 실시간 감시
 #include <QTimer>         // ★ 하이라이트 페이드 타이머
+#include <QElapsedTimer>
 #include "logparser.h"
 #include "reportgenerator.h"
 
@@ -76,6 +77,7 @@ private:
     QToolBar *m_toolBar = nullptr;
     QAction *m_parseBtnAction = nullptr;
     QProgressBar *m_progressBar = nullptr;
+    QElapsedTimer m_parseTimer;
 
     // ── 필터 바 위젯 ──
     QCheckBox      *m_chkError;

@@ -95,6 +95,14 @@
   - CSV 파일은 감시 미지원 (헤더 재해석 문제, 추후 구현 예정)
   - QFileSystemWatcher는 Qt Core 포함 → 별도 CMake 모듈 추가 불필요
 
+- [x] 대용량 파일 파싱 개선
+  - QtConcurrent 백그라운드 파싱 (UI 블로킹 해결)
+  - 상태바에 QProgressBar 추가 (파싱 진행률 실시간 표시)
+  - 파싱되는 대로 테이블에 실시간 행 추가 (entryCallback 방식)
+  - 파싱 시작 버튼 QAction으로 교체 (툴바 표시/숨김 정상 동작)
+  - m_toolBar 멤버변수화
+  - 성능 테스트용 로그 생성 스크립트 추가 (generate_large_log.ps1)
+
 ## 현재 코드 구조 (파일 업로드 없이 파악용)
 
 ### LogEntry 구조체 (logparser.h)
@@ -114,6 +122,7 @@ struct LogEntry {
 - `QVector<LogEntry> parse(const QString &filePath)` : 파일 파싱 후 entries 반환
 - `QVector<LogEntry> parseTail(const QString &filePath, qint64 startOffset, qint64 &outEndOffset)` : offset 이후 새 줄만 파싱 (실시간 감시용)
 - `int noiseCount()` : 마지막 파싱의 노이즈 줄 수
+- `QVector<LogEntry> parse(const QString &filePath, progressCallback, entryCallback)` : 파일 파싱, 진행률/엔트리 콜백 지원
 - 내부적으로 3가지 regex 패턴 매칭 (Standard / Slash / ISO)
 
 ### MainWindow 주요 멤버 (mainwindow.h/cpp)
@@ -154,6 +163,7 @@ struct LogEntry {
 - 리포트 생성 → onGenerateReport()
 
 ## 다음 단계
-
+- [ ] 파싱 완료 시 소요 시간 표시
+- [ ] 파싱 중 캐시된 다른 파일 탐색 가능하도록 개선 (파싱 중 다른 파일 클릭 시 캐시 있으면 즉시 표시)
+- [ ] 소용량 파일도 캐시 적용 (현재 AUTO_PARSE_LIMIT 이하 파일은 매번 재파싱)
 - [ ] CSV 실시간 감시 지원 (dateCol 캐싱: QMap<QString, int> m_csvDateColCache)
-- [ ] 추가 기능 검토

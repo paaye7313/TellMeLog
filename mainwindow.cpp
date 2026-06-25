@@ -758,11 +758,18 @@ void MainWindow::parseAndDisplay(const QString &filePath)
                 m_progressBar->setValue(100);
 
                 QFileInfo fi(filePath);
-                statusBar()->showMessage(
-                    QString("%1 — %2줄 파싱 완료 (노이즈: %3줄)")
-                        .arg(fi.fileName())
-                        .arg(m_allEntries.size())
-                        .arg(m_parser.noiseCount()));
+
+                int total = m_allEntries.size();
+                int noise = std::count_if(m_allEntries.begin(), m_allEntries.end(),
+                                          [](const LogEntry &e){ return !e.parsed; });
+
+                double elapsed = m_parseTimer.elapsed() / 1000.0;
+                this->statusBar()->showMessage(
+                    QString("파싱 완료 — 총 %1줄 (노이즈 %2줄) | 소요 시간: %3초")
+                        .arg(total)
+                        .arg(noise)
+                        .arg(elapsed, 0, 'f', 2)
+                    );
                 setWindowTitle("TellMeLog — " + fi.fileName());
                 m_parseBtnAction->setVisible(false);
             });
@@ -771,6 +778,8 @@ void MainWindow::parseAndDisplay(const QString &filePath)
     m_progressBar->setVisible(true);
 
     m_logTableWidget->setRowCount(0);
+
+    m_parseTimer.start();
 
     watcher->setFuture(QtConcurrent::run([this, filePath]() {
         return m_parser.parse(filePath,
