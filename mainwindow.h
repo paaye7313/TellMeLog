@@ -19,8 +19,17 @@
 #include <QFileSystemWatcher> // ★ 실시간 감시
 #include <QTimer>         // ★ 하이라이트 페이드 타이머
 #include <QElapsedTimer>
+#include <QFutureWatcher>
 #include "logparser.h"
 #include "reportgenerator.h"
+
+
+struct ParseResult {
+    QVector<LogEntry> entries;
+    QDateTime minDt;
+    QDateTime maxDt;
+    int noiseCount = 0;
+};
 
 static constexpr qint64 AUTO_PARSE_LIMIT = 1 * 1024 * 1024;
 
@@ -98,7 +107,7 @@ private:
     QString            m_currentFile;
     QVector<LogEntry>  m_allEntries;
 
-    QMap<QString, QVector<LogEntry>> m_entryCache;
+    QMap<QString, ParseResult> m_entryCache;
 
     // ── 병합 색상 ──
     QMap<QString, QColor> m_fileColors;

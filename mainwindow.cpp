@@ -643,16 +643,18 @@ void MainWindow::onRemoveFile()
 // ── 파일 선택 시 ───────────────────────────────────────────
 void MainWindow::onFileSelected(QListWidgetItem *item)
 {
-    qDebug() << "onFileSelected called:" << item->toolTip();
     m_currentFile = item->toolTip();
     QFileInfo fi(m_currentFile);
 
-    qDebug() << "file size:" << fi.size();
-    qDebug() << "AUTO_PARSE_LIMIT:" << AUTO_PARSE_LIMIT;
+    // 캐시 있으면 크기 무관하게 즉시 표시
+    if (m_entryCache.contains(m_currentFile)) {
+        m_parseBtnAction->setVisible(false);
+        parseAndDisplay(m_currentFile); // 내부에서 캐시 분기 처리
+        return;
+    }
 
     if (fi.size() <= AUTO_PARSE_LIMIT) {
         m_parseBtnAction->setVisible(false);
-        statusBar()->showMessage(QString("파싱 중... (%1)").arg(fi.fileName()));
         parseAndDisplay(m_currentFile);
     } else {
         m_parseBtnAction->setVisible(true);
@@ -678,137 +680,151 @@ void MainWindow::parseAndDisplay(const QString &filePath)
 {
     // 캐시에 있으면 재파싱 없이 바로 표시
     if (m_entryCache.contains(filePath)) {
-        m_allEntries = m_entryCache[filePath];
+        const ParseResult &cached = m_entryCache[filePath]; // 복사 없이 참조
+        m_allEntries = cached.entries;                       // 이건 필요 (필터용)
 
-        QDateTime minDt, maxDt;
-        for (const LogEntry &e : m_allEntries) {
-            if (!e.parsed) continue;
-            QString dtStr = e.date + " " + e.timestamp;
-            QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
-            if (!dt.isValid()) dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
-            if (!dt.isValid()) continue;
-            if (!minDt.isValid() || dt < minDt) minDt = dt;
-            if (!maxDt.isValid() || dt > maxDt) maxDt = dt;
-        }
-        if (minDt.isValid() && maxDt.isValid()) {
+        // minDt/maxDt 계산 없이 캐시된 값 바로 사용
+        if (cached.minDt.isValid() && cached.maxDt.isValid()) {
             m_dateFrom->blockSignals(true); m_dateTo->blockSignals(true);
             m_timeFrom->blockSignals(true); m_timeTo->blockSignals(true);
-            m_dateFrom->setDate(minDt.date()); m_dateTo->setDate(maxDt.date());
-            m_timeFrom->setTime(minDt.time()); m_timeTo->setTime(maxDt.time());
+            m_dateFrom->setDate(cached.minDt.date()); m_dateTo->setDate(cached.maxDt.date());
+            m_timeFrom->setTime(cached.minDt.time()); m_timeTo->setTime(cached.maxDt.time());
             m_dateFrom->blockSignals(false); m_dateTo->blockSignals(false);
             m_timeFrom->blockSignals(false); m_timeTo->blockSignals(false);
         }
 
-        applyFilters();
+        // 필터 초기화 후 populateTable 직접 호출 (applyFilters 대신)
+        m_chkError->blockSignals(true);  m_chkError->setChecked(true);  m_chkError->blockSignals(false);
+        m_chkWarn->blockSignals(true);   m_chkWarn->setChecked(true);   m_chkWarn->blockSignals(false);
+        m_chkInfo->blockSignals(true);   m_chkInfo->setChecked(true);   m_chkInfo->blockSignals(false);
+        m_chkNoise->blockSignals(true);  m_chkNoise->setChecked(true);  m_chkNoise->blockSignals(false);
+        m_sortCombo->blockSignals(true); m_sortCombo->setCurrentIndex(0); m_sortCombo->blockSignals(false);
+        m_searchEdit->blockSignals(true); m_searchEdit->clear(); m_searchEdit->blockSignals(false);
+
+        populateTable(cached.entries);
+
         QFileInfo fi(filePath);
         statusBar()->showMessage(
-            QString("%1 — %2줄 (캐시)").arg(fi.fileName()).arg(m_allEntries.size()));
+            QString("%1 — 총 %2줄 (캐시)").arg(fi.fileName()).arg(cached.entries.size()));
         setWindowTitle("TellMeLog — " + fi.fileName());
         return;
     }
 
     // 백그라운드 파싱
     statusBar()->showMessage(QString("파싱 중... (%1)").arg(QFileInfo(filePath).fileName()));
-    m_addFileBtn->setEnabled(false);
-    m_removeFileBtn->setEnabled(false);
     m_parseBtnAction->setVisible(false);
     statusBar()->showMessage(QString("파싱 중... (%1)").arg(QFileInfo(filePath).fileName()));
 
-    auto *watcher = new QFutureWatcher<QVector<LogEntry>>(this);
+    auto *watcher = new QFutureWatcher<ParseResult>(this);
 
-    connect(watcher, &QFutureWatcher<QVector<LogEntry>>::finished, this,
+    connect(watcher, &QFutureWatcher<ParseResult>::finished, this,
             [this, filePath, watcher]() {
-                QVector<LogEntry> entries = watcher->result();
+                ParseResult result = watcher->result();
                 watcher->deleteLater();
-                m_progressBar->setValue(95);
-                m_addFileBtn->setEnabled(true);
-                m_removeFileBtn->setEnabled(true);
-                m_progressBar->setVisible(false);
 
-                for (LogEntry &e : entries)
-                    e.sourceFile = filePath;
-
-                m_entryCache[filePath] = entries;
-                m_allEntries = entries;
+                m_entryCache[filePath] = result;          // ParseResult 통째로 저장
+                m_allEntries = result.entries;
 
                 if (m_watchedFiles.contains(filePath))
                     m_fileTailPos[filePath] = QFileInfo(filePath).size();
 
-                QDateTime minDt, maxDt;
-                for (const LogEntry &e : m_allEntries) {
-                    if (!e.parsed) continue;
-                    QString dtStr = e.date + " " + e.timestamp;
-                    QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
-                    if (!dt.isValid())
-                        dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
-                    if (!dt.isValid()) continue;
-                    if (!minDt.isValid() || dt < minDt) minDt = dt;
-                    if (!maxDt.isValid() || dt > maxDt) maxDt = dt;
-                }
-                if (minDt.isValid() && maxDt.isValid()) {
+                // 필터 전체 초기화
+                m_chkError->blockSignals(true);  m_chkError->setChecked(true);  m_chkError->blockSignals(false);
+                m_chkWarn->blockSignals(true);   m_chkWarn->setChecked(true);   m_chkWarn->blockSignals(false);
+                m_chkInfo->blockSignals(true);   m_chkInfo->setChecked(true);   m_chkInfo->blockSignals(false);
+                m_chkNoise->blockSignals(true);  m_chkNoise->setChecked(true);  m_chkNoise->blockSignals(false);
+                m_sortCombo->blockSignals(true); m_sortCombo->setCurrentIndex(0); m_sortCombo->blockSignals(false);
+                m_searchEdit->blockSignals(true); m_searchEdit->clear(); m_searchEdit->blockSignals(false);
+
+                // 날짜/시간 범위 설정 (백그라운드에서 계산된 값 사용)
+                if (result.minDt.isValid() && result.maxDt.isValid()) {
                     m_dateFrom->blockSignals(true); m_dateTo->blockSignals(true);
                     m_timeFrom->blockSignals(true); m_timeTo->blockSignals(true);
-                    m_dateFrom->setDate(minDt.date()); m_dateTo->setDate(maxDt.date());
-                    m_timeFrom->setTime(minDt.time()); m_timeTo->setTime(maxDt.time());
+                    m_dateFrom->setDate(result.minDt.date()); m_dateTo->setDate(result.maxDt.date());
+                    m_timeFrom->setTime(result.minDt.time()); m_timeTo->setTime(result.maxDt.time());
                     m_dateFrom->blockSignals(false); m_dateTo->blockSignals(false);
                     m_timeFrom->blockSignals(false); m_timeTo->blockSignals(false);
                 }
 
-                applyFilters();
                 m_progressBar->setValue(100);
-
-                QFileInfo fi(filePath);
-
-                int total = m_allEntries.size();
-                int noise = std::count_if(m_allEntries.begin(), m_allEntries.end(),
-                                          [](const LogEntry &e){ return !e.parsed; });
+                m_progressBar->setVisible(false);
 
                 double elapsed = m_parseTimer.elapsed() / 1000.0;
-                this->statusBar()->showMessage(
+                statusBar()->showMessage(
                     QString("파싱 완료 — 총 %1줄 (노이즈 %2줄) | 소요 시간: %3초")
-                        .arg(total)
-                        .arg(noise)
+                        .arg(result.entries.size())
+                        .arg(result.noiseCount)
                         .arg(elapsed, 0, 'f', 2)
                     );
-                setWindowTitle("TellMeLog — " + fi.fileName());
+                setWindowTitle("TellMeLog — " + QFileInfo(filePath).fileName());
                 m_parseBtnAction->setVisible(false);
             });
 
-    m_progressBar->setValue(0);
-    m_progressBar->setVisible(true);
-
-    m_logTableWidget->setRowCount(0);
-
     m_parseTimer.start();
-
+    // QtConcurrent::run 안에서 무거운 작업 모두 처리
     watcher->setFuture(QtConcurrent::run([this, filePath]() {
-        return m_parser.parse(filePath,
-                              [this](int pct) {
-                                  QMetaObject::invokeMethod(this, [this, pct]() {
-                                      m_progressBar->setValue(pct);
-                                  }, Qt::QueuedConnection);
-                              },
-                              [this](const LogEntry &entry) {
-                                  QMetaObject::invokeMethod(this, [this, entry]() {
-                                      int row = m_logTableWidget->rowCount();
-                                      m_logTableWidget->insertRow(row);
-                                      m_logTableWidget->setItem(row, 0, new QTableWidgetItem(entry.date));
-                                      m_logTableWidget->setItem(row, 1, new QTableWidgetItem(entry.timestamp));
-                                      m_logTableWidget->setItem(row, 2, new QTableWidgetItem(entry.level));
-                                      m_logTableWidget->setItem(row, 3, new QTableWidgetItem(entry.module));
-                                      m_logTableWidget->setItem(row, 4, new QTableWidgetItem(entry.message));
+        ParseResult result;
 
-                                      QColor rowColor;
-                                      if (!entry.parsed)       rowColor = QColor("#f0f0f0");
-                                      else if (entry.level == "ERROR") rowColor = QColor("#ffe0e0");
-                                      else if (entry.level == "WARN")  rowColor = QColor("#fff4cc");
-                                      if (rowColor.isValid()) {
-                                          for (int col = 0; col < 5; ++col)
-                                              if (auto *cell = m_logTableWidget->item(row, col))
-                                                  cell->setBackground(rowColor);
-                                      }
-                                  }, Qt::QueuedConnection);
-                              });
+        result.entries = m_parser.parse(filePath,
+                                        [this](int pct) {
+                                            QMetaObject::invokeMethod(this, [this, pct]() {
+                                                m_progressBar->setValue(pct);
+                                            }, Qt::QueuedConnection);
+                                        },
+                                        [this](const QVector<LogEntry> &batch) {
+                                            QMetaObject::invokeMethod(this, [this, batch]() {
+                                                m_logTableWidget->setUpdatesEnabled(false);
+                                                for (const LogEntry &entry : batch) {
+                                                    int row = m_logTableWidget->rowCount();
+                                                    m_logTableWidget->insertRow(row);
+                                                    m_logTableWidget->setItem(row, 0, new QTableWidgetItem(entry.date));
+                                                    m_logTableWidget->setItem(row, 1, new QTableWidgetItem(entry.timestamp));
+                                                    m_logTableWidget->setItem(row, 2, new QTableWidgetItem(entry.level));
+                                                    m_logTableWidget->setItem(row, 3, new QTableWidgetItem(entry.module));
+                                                    m_logTableWidget->setItem(row, 4, new QTableWidgetItem(entry.message));
+
+                                                    QColor rowColor;
+                                                    if (!entry.parsed)               rowColor = QColor("#f0f0f0");
+                                                    else if (entry.level == "ERROR") rowColor = QColor("#ffe0e0");
+                                                    else if (entry.level == "WARN")  rowColor = QColor("#fff4cc");
+                                                    if (rowColor.isValid()) {
+                                                        for (int col = 0; col < 5; ++col)
+                                                            if (auto *cell = m_logTableWidget->item(row, col))
+                                                                cell->setBackground(rowColor);
+                                                    }
+                                                }
+                                                m_logTableWidget->setUpdatesEnabled(true);
+                                            }, Qt::QueuedConnection);
+                                        });
+
+        // 백그라운드에서 무거운 후처리
+        auto toDateTime = [](const LogEntry &e) -> QDateTime {
+            QString dtStr = e.date + " " + e.timestamp;
+            QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
+            if (!dt.isValid()) dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
+            return dt;
+        };
+
+        for (LogEntry &e : result.entries) {
+            e.sourceFile = filePath;
+            if (!e.parsed) ++result.noiseCount;
+        }
+
+        // 첫 번째 parsed 엔트리 → minDt
+        for (const LogEntry &e : result.entries) {
+            if (!e.parsed) continue;
+            result.minDt = toDateTime(e);
+            if (result.minDt.isValid()) break;
+        }
+
+        // 마지막 parsed 엔트리 → maxDt
+        for (int i = result.entries.size() - 1; i >= 0; --i) {
+            if (!result.entries[i].parsed) continue;
+            result.maxDt = toDateTime(result.entries[i]);
+            if (result.maxDt.isValid()) break;
+        }
+
+        return result;
     }));
 }
 
@@ -973,18 +989,18 @@ void MainWindow::populateTable(const QVector<LogEntry> &entries)
     }
     bool mergeMode = (checkedCount > 1);
 
+    m_logTableWidget->setSortingEnabled(false);
+    m_logTableWidget->setUpdatesEnabled(false);
     m_logTableWidget->setRowCount(0);
 
     for (const LogEntry &entry : entries) {
         int row = m_logTableWidget->rowCount();
         m_logTableWidget->insertRow(row);
-
         m_logTableWidget->setItem(row, 0, new QTableWidgetItem(entry.date));
         m_logTableWidget->setItem(row, 1, new QTableWidgetItem(entry.timestamp));
         m_logTableWidget->setItem(row, 2, new QTableWidgetItem(entry.level));
         m_logTableWidget->setItem(row, 3, new QTableWidgetItem(entry.module));
         m_logTableWidget->setItem(row, 4, new QTableWidgetItem(entry.message));
-
         QColor rowColor;
         if (!entry.parsed) {
             rowColor = QColor("#f0f0f0");
@@ -995,14 +1011,15 @@ void MainWindow::populateTable(const QVector<LogEntry> &entries)
         } else if (mergeMode && !entry.sourceFile.isEmpty()) {
             rowColor = m_fileColors.value(entry.sourceFile, QColor("#FFFFFF"));
         }
-
         if (rowColor.isValid()) {
-            for (int col = 0; col < 5; ++col) {
+            for (int col = 0; col < 5; ++col)
                 if (auto *cell = m_logTableWidget->item(row, col))
                     cell->setBackground(rowColor);
-            }
         }
     }
+
+    m_logTableWidget->setUpdatesEnabled(true);
+    m_logTableWidget->setSortingEnabled(false); // 자동 정렬은 계속 비활성화
 }
 
 // ── CSV 내보내기 ───────────────────────────────────────────

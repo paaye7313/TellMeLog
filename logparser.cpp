@@ -3,10 +3,11 @@
 #include <QTextStream>
 #include <QRegularExpression>
 #include <QFileInfo>  // ★ 추가
+#include <QElapsedTimer>
 
 QVector<LogEntry> LogParser::parse(const QString &filePath,
                                    std::function<void(int)> progressCallback,
-                                   std::function<void(const LogEntry&)> entryCallback)
+                                   std::function<void(const QVector<LogEntry>&)> entryCallback)
 {
     m_noiseCount = 0;
 
@@ -27,6 +28,13 @@ QVector<LogEntry> LogParser::parse(const QString &filePath,
     qint64 fileSize = file.size();
     int lastReported = -1;
 
+    QElapsedTimer batchTimer;
+    batchTimer.start();
+
+    constexpr int BATCH_SIZE = 500;
+    QVector<LogEntry> batch;
+    batch.reserve(BATCH_SIZE);
+
     while (!in.atEnd()) {
         QString line = in.readLine().trimmed();
         if (line.isEmpty())
@@ -35,8 +43,13 @@ QVector<LogEntry> LogParser::parse(const QString &filePath,
         if (!entry.parsed)
             ++m_noiseCount;
         entries.append(entry);
-        if (entryCallback)
-            entryCallback(entry);
+        batch.append(entry);
+
+        if (entryCallback && (batch.size() >= 2000 || batchTimer.elapsed() >= 100)) {
+            entryCallback(batch);
+            batch.clear();
+            batchTimer.restart();
+        }
 
         if (progressCallback && fileSize > 0) {
             int pct = static_cast<int>(file.pos() * 90 / fileSize);
@@ -46,6 +59,10 @@ QVector<LogEntry> LogParser::parse(const QString &filePath,
             }
         }
     }
+
+    // 남은 배치 처리
+    if (entryCallback && !batch.isEmpty())
+        entryCallback(batch);
 
     file.close();
     return entries;
