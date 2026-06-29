@@ -103,6 +103,19 @@
   - m_toolBar 멤버변수화
   - 성능 테스트용 로그 생성 스크립트 추가 (generate_large_log.ps1)
 
+- [x] 파싱 성능 최적화 (10MB 기준 60초+ → ~1초)
+  - entryCallback 배치 방식 전환 (500줄 or 100ms 단위)
+  - setUpdatesEnabled(false/true)로 배치 삽입 중 리렌더링 차단
+  - finished 슬롯에서 applyFilters() 중복 호출 제거
+  - ParseResult 구조체 도입 → 후처리 전체를 백그라운드로 이동
+  - minDt/maxDt 계산: 전체 순회 → 첫/마지막 parsed 엔트리만 확인 (QDateTime::fromString 12만 번 → 2번)
+  - populateTable()에 setUpdatesEnabled + setSortingEnabled(false) 적용
+
+- [x] 파싱 결과 캐시 및 파일 전환
+  - m_entryCache: QMap<QString, ParseResult>로 파싱 완료 결과 보관
+  - 파일 전환 시 캐시 있으면 재파싱 없이 즉시 표시 (대용량 포함)
+  - ParseResult에 minDt/maxDt 포함 → 캐시 불러올 때 재계산 없음
+
 ## 현재 코드 구조 (파일 업로드 없이 파악용)
 
 ### LogEntry 구조체 (logparser.h)
@@ -134,6 +147,7 @@ struct LogEntry {
 - `parseAndDisplay(filePath)` → `m_parser.parse()` 호출 → `populateTable()` 호출
 - `AUTO_PARSE_LIMIT` = 1MB, 초과 시 m_parseBtn 표시
 - `m_allEntries` : QVector<LogEntry>, 전체 파싱 결과 보관 (필터용)
+- `m_entryCache` : QMap<QString, ParseResult>, 파싱 완료 결과 캐시
 - `m_chkError / m_chkWarn / m_chkInfo / m_chkNoise` : 레벨 필터 체크박스
 - `m_dateFrom / m_dateTo` : QDateEdit, 날짜 범위 필터
 - `m_timeFrom / m_timeTo` : QTimeEdit, 시간 범위 필터
@@ -154,6 +168,16 @@ struct LogEntry {
 - `appendNewEntries(path, entries)` : 새 항목을 m_allEntries에 추가 + 테이블 반영
 - `highlightNewRows(fromRow, toRow)` : 신규 행 노란→원래색 페이드
 
+### ParseResult 구조체 (mainwindow.h)
+```cpp
+struct ParseResult {
+    QVector<LogEntry> entries;
+    QDateTime minDt;
+    QDateTime maxDt;
+    int noiseCount = 0;
+};
+```
+
 ### 툴바 버튼 연결
 - 파일 추가 → onAddFile()
 - 파일 제거 → onRemoveFile()
@@ -163,7 +187,7 @@ struct LogEntry {
 - 리포트 생성 → onGenerateReport()
 
 ## 다음 단계
-- [ ] 파싱 완료 시 소요 시간 표시
-- [ ] 파싱 중 캐시된 다른 파일 탐색 가능하도록 개선 (파싱 중 다른 파일 클릭 시 캐시 있으면 즉시 표시)
-- [ ] 소용량 파일도 캐시 적용 (현재 AUTO_PARSE_LIMIT 이하 파일은 매번 재파싱)
+- [ ] 필터 성능 개선 (applyFilters가 파싱처럼 느린 문제)
+- [ ] PDF 리포트 개선 (ERROR/WARN 상세 목록 페이지 수 제한 또는 요약 방식 변경)
+- [ ] ParseManager 구현 (파싱 중 다른 파일 클릭 시 충돌 방지 — 보류, 우선순위 낮음)
 - [ ] CSV 실시간 감시 지원 (dateCol 캐싱: QMap<QString, int> m_csvDateColCache)

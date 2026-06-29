@@ -4,6 +4,7 @@
 #include <QString>
 #include <QVector>
 #include <QFile>
+#include <QDateTime>
 
 // 파싱된 로그 한 줄을 담는 구조체
 // PyQt였다면 dataclass나 dict로 쓸 부분
@@ -15,6 +16,7 @@ struct LogEntry {
     QString message;
     bool    parsed;      // false = 노이즈 라인
     QString sourceFile;  // 출처 파일 경로 (병합 시 색상 구분용)
+    QDateTime sortKey;   // 파싱 시 1회 계산, 필터/정렬에서 재사용
 };
 
 class LogParser

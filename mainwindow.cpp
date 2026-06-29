@@ -799,15 +799,34 @@ void MainWindow::parseAndDisplay(const QString &filePath)
 
         // 백그라운드에서 무거운 후처리
         auto toDateTime = [](const LogEntry &e) -> QDateTime {
-            QString dtStr = e.date + " " + e.timestamp;
-            QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
-            if (!dt.isValid()) dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
-            return dt;
+            return e.sortKey;  // 이미 계산된 값 그대로 반환
         };
 
+        static const QRegularExpression reDMY(R"(^(\d{2})/(\d{2})/(\d{4})$)");
         for (LogEntry &e : result.entries) {
             e.sourceFile = filePath;
-            if (!e.parsed) ++result.noiseCount;
+            if (!e.parsed) { ++result.noiseCount; continue; }
+
+            // 날짜 정규화
+            QString dateNorm = e.date;
+            QRegularExpressionMatch dm = reDMY.match(dateNorm);
+            if (dm.hasMatch())
+                dateNorm = dm.captured(3) + "-" + dm.captured(2) + "-" + dm.captured(1);
+            else if (dateNorm.contains('/'))
+                dateNorm.replace('/', '-');
+
+            // 직접 파싱 (fromString 제거)
+            const QString &t = e.timestamp;
+            if (dateNorm.size() >= 10 && t.size() >= 8) {
+                int y  = QStringView(dateNorm).mid(0, 4).toInt();
+                int mo = QStringView(dateNorm).mid(5, 2).toInt();
+                int dy = QStringView(dateNorm).mid(8, 2).toInt();
+                int h  = QStringView(t).mid(0, 2).toInt();
+                int mi = QStringView(t).mid(3, 2).toInt();
+                int s  = QStringView(t).mid(6, 2).toInt();
+                int ms = (t.size() > 9) ? QStringView(t).mid(9).left(3).toInt() : 0;
+                e.sortKey = QDateTime(QDate(y, mo, dy), QTime(h, mi, s, ms));
+            }
         }
 
         // 첫 번째 parsed 엔트리 → minDt
@@ -894,6 +913,7 @@ void MainWindow::applyFilters()
     filtered.reserve(m_allEntries.size());
 
     for (const LogEntry &e : m_allEntries) {
+        // 레벨 필터
         if (!e.parsed) {
             if (!showNoise) continue;
         } else if (e.level == "ERROR") {
@@ -904,16 +924,12 @@ void MainWindow::applyFilters()
             if (!showInfo) continue;
         }
 
-        if (e.parsed) {
-            QString dtStr = e.date + " " + e.timestamp;
-            QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
-            if (!dt.isValid())
-                dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
-            if (dt.isValid()) {
-                if (dt < dtFrom || dt > dtTo) continue;
-            }
+        // 날짜/시간 필터 — sortKey 직접 비교 (fromString 제거)
+        if (e.parsed && e.sortKey.isValid()) {
+            if (e.sortKey < dtFrom || e.sortKey > dtTo) continue;
         }
 
+        // 검색 필터
         if (!keyword.isEmpty()) {
             bool hit = false;
             if (searchScope == "module") {
@@ -933,34 +949,15 @@ void MainWindow::applyFilters()
         filtered.append(e);
     }
 
-    auto toDateTime = [](const LogEntry &e) -> QDateTime {
-        QString dateStr = e.date;
-        static const QRegularExpression reDMY(R"(^(\d{2})/(\d{2})/(\d{4})$)");
-        QRegularExpressionMatch m = reDMY.match(dateStr);
-        if (m.hasMatch())
-            dateStr = m.captured(3) + "-" + m.captured(2) + "-" + m.captured(1);
-
-        QString dtStr = dateStr + " " + e.timestamp;
-
-        QDateTime dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss.zzz");
-        if (!dt.isValid())
-            dt = QDateTime::fromString(dtStr, "yyyy-MM-dd HH:mm:ss");
-        if (!dt.isValid())
-            dt = QDateTime::fromString(dtStr, "yyyy/MM/dd HH:mm:ss.zzz");
-        if (!dt.isValid())
-            dt = QDateTime::fromString(dtStr, "yyyy/MM/dd HH:mm:ss");
-        return dt;
-    };
-
+    // 정렬 — sortKey 직접 비교 (toDateTime 람다 제거)
     if (sortMode != "original") {
         std::sort(filtered.begin(), filtered.end(),
                   [&](const LogEntry &a, const LogEntry &b) {
-                      QDateTime da = toDateTime(a);
-                      QDateTime db = toDateTime(b);
-                      if (!da.isValid() && !db.isValid()) return false;
-                      if (!da.isValid()) return false;
-                      if (!db.isValid()) return true;
-                      return (sortMode == "desc") ? da > db : da < db;
+                      if (!a.sortKey.isValid() && !b.sortKey.isValid()) return false;
+                      if (!a.sortKey.isValid()) return false;
+                      if (!b.sortKey.isValid()) return true;
+                      return (sortMode == "desc") ? a.sortKey > b.sortKey
+                                                  : a.sortKey < b.sortKey;
                   });
     }
 
@@ -971,8 +968,6 @@ void MainWindow::applyFilters()
                             .arg(m_allEntries.size());
     if (!keyword.isEmpty())
         statusMsg += QString("  |  🔍 \"%1\" (%2 범위)").arg(keyword).arg(m_searchScopeCombo->currentText());
-
-    // ★ 감시 중이면 상태바 뒤에 표시
     if (!m_watchedFiles.isEmpty())
         statusMsg += QString("  |  👁 감시 중: %1개 파일").arg(m_watchedFiles.size());
 
