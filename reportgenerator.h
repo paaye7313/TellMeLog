@@ -6,6 +6,7 @@
 #include "logparser.h"
 
 class QWidget;
+class QTextDocument;
 
 class ReportGenerator
 {
@@ -18,8 +19,10 @@ public:
                   const QString &sourceFile);
 
 private:
+    // doc: 차트 이미지를 addResource()로 등록할 QTextDocument (generate()에서 생성해서 전달)
     QString buildHtml(const QVector<LogEntry> &entries,
-                      const QString &sourceFile);
+                      const QString &sourceFile,
+                      QTextDocument &doc);
 };
 
 #endif // REPORTGENERATOR_H

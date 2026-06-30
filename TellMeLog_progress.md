@@ -116,6 +116,22 @@
   - 파일 전환 시 캐시 있으면 재파싱 없이 즉시 표시 (대용량 포함)
   - ParseResult에 minDt/maxDt 포함 → 캐시 불러올 때 재계산 없음
 
+- [x] 필터 성능 개선
+  - LogEntry에 QDateTime sortKey 필드 추가 (파싱 시 1회 계산)
+  - 날짜/시간 필터·정렬에서 QDateTime::fromString() 완전 제거
+  - 직접 문자열 슬라이싱으로 QDateTime 생성 (QStringView::toInt)
+  - 10MB 기준 필터 응답속도 대폭 개선
+
+- [x] PDF 리포트 개선 (페이지 수 문제 해결)
+  - 기존 "모듈별 오류 통계" 텍스트 테이블 → 모듈별 ERROR+WARN TOP 20 막대그래프로 교체
+  - 기존 "ERROR 목록 / WARN 목록" 상세 테이블 → 메시지별 발생 빈도 TOP 20 막대그래프로 교체
+    (메시지 그룹화는 완전 동일 문자열 기준)
+  - renderBarChart() 함수 추가 (reportgenerator.cpp 내부 static 함수, QPainter로 QPixmap 렌더링)
+  - QTextDocument::addResource()로 차트 이미지를 리소스 등록 → <img src='chart://...'> 로 HTML 삽입
+  - buildHtml() 시그니처에 QTextDocument& 파라미터 추가 (차트 리소스 등록을 위해 generate()에서 doc을 먼저 생성 후 전달)
+  - 리포트 생성 시 응답성 개선: QApplication::setOverrideCursor(Qt::WaitCursor) 적용 (옵션 A, 가벼운 처리)
+  - 미리보기 다이얼로그 뜨기 직전 restoreOverrideCursor() 호출
+
 ## 현재 코드 구조 (파일 업로드 없이 파악용)
 
 ### LogEntry 구조체 (logparser.h)
@@ -128,6 +144,7 @@ struct LogEntry {
     QString message;    // 메시지
     bool    parsed;     // false = 노이즈 라인
     QString sourceFile;  // 출처 파일 경로 (병합 시 색상 구분용)
+    QDateTime sortKey;  // 파싱 시 1회 계산, 필터/정렬 재사용
 };
 ```
 
@@ -178,6 +195,11 @@ struct ParseResult {
 };
 ```
 
+### ReportGenerator 클래스 (reportgenerator.h/cpp)
+- `generate(parent, entries, sourceFile)` : 리포트 생성 진입점, QTextDocument 생성 후 buildHtml() 호출 → 미리보기 다이얼로그 표시
+- `buildHtml(entries, sourceFile, doc)` : HTML 조립, 모듈별/메시지별 TOP20 차트를 doc에 리소스로 등록
+- `renderBarChart(data, title)` : static 함수, (라벨,값) 목록을 받아 QPixmap 막대그래프 생성
+
 ### 툴바 버튼 연결
 - 파일 추가 → onAddFile()
 - 파일 제거 → onRemoveFile()
@@ -187,7 +209,5 @@ struct ParseResult {
 - 리포트 생성 → onGenerateReport()
 
 ## 다음 단계
-- [ ] 필터 성능 개선 (applyFilters가 파싱처럼 느린 문제)
-- [ ] PDF 리포트 개선 (ERROR/WARN 상세 목록 페이지 수 제한 또는 요약 방식 변경)
 - [ ] ParseManager 구현 (파싱 중 다른 파일 클릭 시 충돌 방지 — 보류, 우선순위 낮음)
 - [ ] CSV 실시간 감시 지원 (dateCol 캐싱: QMap<QString, int> m_csvDateColCache)

@@ -6,10 +6,77 @@
 #include <QTextDocument>
 #include <QFileInfo>
 #include <QDateTime>
+#include <QPainter>
+#include <QFontMetrics>
+#include <QUrl>
+#include <QApplication>
+#include <QCursor>
+#include <algorithm>
+
+// ── 막대그래프 렌더링 (파일 내부 전용) ──────────────────────
+// data: (라벨, 값) 쌍 목록 — 이미 정렬/TOP20 컷 된 상태로 전달받음
+static QPixmap renderBarChart(const QVector<QPair<QString,int>> &data,
+                              const QString &title)
+{
+    const int W = 700;
+    const int barH = 18;
+    const int gap = 6;
+    const int leftMargin = 220;   // 라벨 영역
+    const int rightMargin = 50;   // 값 표시 영역
+    const int topMargin = 36;
+    const int bottomMargin = 10;
+    const int n = data.size();
+    const int H = topMargin + bottomMargin + n * (barH + gap);
+
+    QPixmap pix(W, qMax(H, topMargin + bottomMargin + barH));
+    pix.fill(Qt::white);
+    QPainter p(&pix);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    QFont titleFont = p.font();
+    titleFont.setBold(true);
+    titleFont.setPointSize(11);
+    p.setFont(titleFont);
+    p.setPen(QColor("#1a3a5c"));
+    p.drawText(QRect(0, 4, W, 24), Qt::AlignLeft | Qt::AlignVCenter, title);
+
+    int maxVal = 1;
+    for (const auto &kv : data) maxVal = qMax(maxVal, kv.second);
+
+    const int chartW = W - leftMargin - rightMargin;
+
+    QFont labelFont = p.font();
+    labelFont.setBold(false);
+    labelFont.setPointSize(8);
+    p.setFont(labelFont);
+    QFontMetrics fm(labelFont);
+
+    int y = topMargin;
+    for (const auto &kv : data) {
+        QString label = fm.elidedText(kv.first.isEmpty() ? "(없음)" : kv.first,
+                                      Qt::ElideRight, leftMargin - 10);
+        p.setPen(QColor("#333"));
+        p.drawText(QRect(0, y, leftMargin - 10, barH),
+                   Qt::AlignVCenter | Qt::AlignRight, label);
+
+        int barW = static_cast<int>(static_cast<double>(kv.second) / maxVal * chartW);
+        p.fillRect(leftMargin, y, qMax(barW, 2), barH, QColor("#1a6cbf"));
+
+        p.setPen(QColor("#222"));
+        p.drawText(QRect(leftMargin + barW + 6, y, rightMargin, barH),
+                   Qt::AlignVCenter | Qt::AlignLeft, QString::number(kv.second));
+
+        y += barH + gap;
+    }
+
+    p.end();
+    return pix;
+}
 
 // ── HTML 생성 ────────────────────────────────────────────
 QString ReportGenerator::buildHtml(const QVector<LogEntry> &entries,
-                                   const QString &sourceFile)
+                                   const QString &sourceFile,
+                                   QTextDocument &doc)
 {
     // ── 통계 계산 ──
     int totalCount = entries.size();
@@ -18,6 +85,8 @@ QString ReportGenerator::buildHtml(const QVector<LogEntry> &entries,
 
     // 모듈별 ERROR/WARN 카운트: QMap<모듈명, {error, warn}>
     QMap<QString, QPair<int,int>> moduleStats;
+    // 메시지별 ERROR/WARN 카운트 (완전 동일 문자열 기준)
+    QMap<QString, int> messageStats;
 
     for (const LogEntry &e : entries) {
         if (!e.parsed) { ++noiseCount; continue; }
@@ -42,6 +111,9 @@ QString ReportGenerator::buildHtml(const QVector<LogEntry> &entries,
                 moduleStats[e.module] = {0, 0};
             if (e.level == "ERROR") moduleStats[e.module].first++;
             else                    moduleStats[e.module].second++;
+
+            // 메시지별 카운트 (완전 동일 문자열 기준)
+            messageStats[e.message.trimmed()]++;
         }
     }
 
@@ -107,72 +179,53 @@ QString ReportGenerator::buildHtml(const QVector<LogEntry> &entries,
                     "<td>%1</td></tr>\n").arg(noiseCount);
     html += "</table>\n";
 
-    // ── 모듈별 통계 (ERROR/WARN 있는 모듈만) ──
-    if (!moduleStats.isEmpty()) {
-        html += "<h2>모듈별 오류 통계</h2>\n";
-        html += "<table>\n";
-        html += "<tr><th>모듈</th><th>ERROR</th><th>WARN</th></tr>\n";
-
-        // ERROR 많은 순으로 정렬
-        QVector<QPair<QString, QPair<int,int>>> sorted;
+    // ── 모듈별 오류 빈도 TOP 20 그래프 ──
+    html += "<h2>모듈별 오류 빈도 TOP 20</h2>\n";
+    if (moduleStats.isEmpty()) {
+        html += "<p class='no-issues'>✅ ERROR/WARN 없음</p>\n";
+    } else {
+        // 합산(ERROR+WARN) 많은 순 정렬
+        QVector<QPair<QString, QPair<int,int>>> sortedModules;
         for (auto it = moduleStats.begin(); it != moduleStats.end(); ++it)
-            sorted.append({it.key(), it.value()});
-        std::sort(sorted.begin(), sorted.end(),
+            sortedModules.append({it.key(), it.value()});
+        std::sort(sortedModules.begin(), sortedModules.end(),
                   [](const auto &a, const auto &b){
                       return (a.second.first + a.second.second)
                       > (b.second.first + b.second.second);
                   });
 
-        for (const auto &kv : sorted) {
-            html += QString("<tr><td>%1</td>"
-                            "<td class='badge-error'><b>%2</b></td>"
-                            "<td class='badge-warn'>%3</td></tr>\n")
-                        .arg(kv.first.isEmpty() ? "(없음)" : kv.first)
-                        .arg(kv.second.first)
-                        .arg(kv.second.second);
+        QVector<QPair<QString,int>> moduleChartData;
+        for (int i = 0; i < sortedModules.size() && i < 20; ++i) {
+            moduleChartData.append({sortedModules[i].first,
+                                    sortedModules[i].second.first
+                                        + sortedModules[i].second.second});
         }
-        html += "</table>\n";
+
+        QPixmap moduleChart = renderBarChart(moduleChartData, "모듈별 ERROR+WARN 건수");
+        doc.addResource(QTextDocument::ImageResource, QUrl("chart://module"), moduleChart);
+        html += QString("<img src='chart://module' width='%1' height='%2'/>\n")
+                    .arg(moduleChart.width()).arg(moduleChart.height());
     }
 
-    // ── ERROR 목록 ──
-    html += "<h2>ERROR 목록</h2>\n";
-    if (errorCount == 0) {
-        html += "<p class='no-issues'>✅ ERROR 없음</p>\n";
+    // ── 메시지별 발생 빈도 TOP 20 그래프 ──
+    html += "<h2>메시지별 발생 빈도 TOP 20</h2>\n";
+    if (messageStats.isEmpty()) {
+        html += "<p class='no-issues'>✅ ERROR/WARN 없음</p>\n";
     } else {
-        html += "<table>\n";
-        html += "<tr><th>날짜</th><th>시간</th><th>모듈</th><th>메시지</th></tr>\n";
-        for (const LogEntry &e : entries) {
-            if (!e.parsed || e.level != "ERROR") continue;
-            // HTML 이스케이프 (꺾쇠 등이 로그에 포함될 수 있음)
-            QString msg = e.message;
-            msg.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-            html += QString("<tr class='error'><td>%1</td><td>%2</td>"
-                            "<td>%3</td><td>%4</td></tr>\n")
-                        .arg(e.date).arg(e.timestamp)
-                        .arg(e.module.isEmpty() ? "-" : e.module)
-                        .arg(msg);
-        }
-        html += "</table>\n";
-    }
+        QVector<QPair<QString,int>> sortedMsg;
+        for (auto it = messageStats.begin(); it != messageStats.end(); ++it)
+            sortedMsg.append({it.key(), it.value()});
+        std::sort(sortedMsg.begin(), sortedMsg.end(),
+                  [](const auto &a, const auto &b){ return a.second > b.second; });
 
-    // ── WARN 목록 ──
-    html += "<h2>WARN 목록</h2>\n";
-    if (warnCount == 0) {
-        html += "<p class='no-issues'>✅ WARN 없음</p>\n";
-    } else {
-        html += "<table>\n";
-        html += "<tr><th>날짜</th><th>시간</th><th>모듈</th><th>메시지</th></tr>\n";
-        for (const LogEntry &e : entries) {
-            if (!e.parsed || e.level != "WARN") continue;
-            QString msg = e.message;
-            msg.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-            html += QString("<tr class='warn'><td>%1</td><td>%2</td>"
-                            "<td>%3</td><td>%4</td></tr>\n")
-                        .arg(e.date).arg(e.timestamp)
-                        .arg(e.module.isEmpty() ? "-" : e.module)
-                        .arg(msg);
-        }
-        html += "</table>\n";
+        QVector<QPair<QString,int>> msgChartData;
+        for (int i = 0; i < sortedMsg.size() && i < 20; ++i)
+            msgChartData.append(sortedMsg[i]);
+
+        QPixmap msgChart = renderBarChart(msgChartData, "메시지 발생 건수");
+        doc.addResource(QTextDocument::ImageResource, QUrl("chart://message"), msgChart);
+        html += QString("<img src='chart://message' width='%1' height='%2'/>\n")
+                    .arg(msgChart.width()).arg(msgChart.height());
     }
 
     html += "</body></html>";
@@ -184,15 +237,18 @@ void ReportGenerator::generate(QWidget *parent,
                                const QVector<LogEntry> &entries,
                                const QString &sourceFile)
 {
-    QString html = buildHtml(entries, sourceFile);
+    // 통계 계산 + 차트 렌더링 동안 대기 커서 표시 (체감 응답성 개선)
+    QApplication::setOverrideCursor(Qt::WaitCursor);
 
     // QPrinter 설정 (PDF 출력 대상)
     QPrinter printer(QPrinter::HighResolution);
     printer.setPageSize(QPageSize::A4);
     printer.setPageOrientation(QPageLayout::Portrait);
 
-    // QTextDocument에 HTML 세팅
+    // QTextDocument 먼저 생성 — buildHtml 내부에서 차트 이미지를
+    // doc.addResource()로 등록하기 때문에 doc을 참조로 넘겨야 함
     QTextDocument doc;
+    QString html = buildHtml(entries, sourceFile, doc);
     doc.setHtml(html);
     // pageRect 대신 실제 용지 크기(mm → pt 변환)를 직접 지정
     // A4 가로(Landscape): 297mm, 여백 각 15mm → 텍스트 너비 = 267mm
@@ -209,6 +265,8 @@ void ReportGenerator::generate(QWidget *parent,
                      [&doc](QPrinter *p) {
                          doc.print(p);
                      });
+
+    QApplication::restoreOverrideCursor();
 
     preview.exec();  // 모달 다이얼로그 (닫을 때까지 블록)
 }
